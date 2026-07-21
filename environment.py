@@ -1,21 +1,34 @@
-"""
-This is a custom environment, which contains:
-    - multiple UE clusters
-    - multiple UAVs
-    - multiple fog devices
-Custom positions can be provided.
-But in this implemention, they are all in a fixed altitude (z-axis),
-and the UAVs can only move in the x-y plane.
-"""
-
 import numpy as np
 import math
+import gymnasium as gym
+from gymnasium import spaces
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.figure import Figure
 from entities import UAV, UE, FogNode
 
 
-class Environment:
+class Environment(gym.Env):
+    """
+    This is a custom environment, which contains:
+        - multiple UE clusters
+        - multiple UAVs
+        - multiple fog devices
+    Custom positions can be provided.
+    But in this implemention, they are all in a fixed altitude (z-axis),
+    and the UAVs can only move in the x-y plane.
+    """
+
+    metadata = {
+        "render_modes": ["human", "rgb_array"],
+        "render_fps": 30,
+    }
+
     def __init__(
         self,
+        # render parameters
+        render_mode: str | None = None,
+        figsize: tuple[int, int] = (6, 6),
         # environment parameters
         area_size: tuple[float, float] = (600.0, 600.0),
         bandwidth: float = 1.0,  # MHz
@@ -51,6 +64,19 @@ class Environment:
         fog_cpu_speed: float = 10.0,  # GHz
         fog_altitude: float = 100.0,  # meters
     ):
+        super().__init__()
+        self.render_mode = render_mode
+        self.figsize = figsize
+        self.fig = None
+        self.ax = None
+
+        self._is_closed = False
+
+        # pygame rendering attributes
+        self.window = None
+        self.clock = None
+        self.font = None
+
         self.area_size = area_size
         self.bandwidth = bandwidth
         self.noise_power = noise_power
@@ -86,6 +112,20 @@ class Environment:
         self.initial_uav_positions: list[np.ndarray] = [
             uav.position.copy() for uav in self.uavs
         ]
+
+        # Define action space and observation space
+        self.action_space = spaces.Box(
+            low=-1.0,
+            high=1.0,
+            shape=(len(self.uavs), 2 + len(self.ues)),
+            dtype=np.float32,
+        )
+        self.observation_space = spaces.Box(
+            low=0.0,
+            high=max(self.area_size),
+            shape=(len(self.uavs), 3),
+            dtype=np.float32,
+        )
 
     """
         Inner methods for initializing UAVs, UEs, and Fog nodes.
@@ -279,6 +319,16 @@ class Environment:
 
             ue.connected_uav_id = nearest_uav_id
 
+    @property
+    def observation(self) -> np.ndarray:
+        """
+        Get the current observation for all UAVs.
+        The observation contains:
+            - UAV position (x, y, z) for each UAV
+        Shape: [num_uavs, 3]
+        """
+        return np.array([uav.position.copy() for uav in self.uavs], dtype=np.float32)
+
     """
     System cost calculation
     System cost contains:
@@ -373,7 +423,15 @@ class Environment:
         Public methods
     """
 
-    def reset(self) -> list[np.ndarray]:
+    def reset(
+        self, seed: int | None = None, options: dict | None = None
+    ) -> tuple[np.ndarray, dict]:
+        super().reset(seed=seed)
+
+        # reset rendermode
+        if options is not None:
+            self.render_mode = options.get("render_mode", self.render_mode)
+
         # reset positions
         for idx, uav in enumerate(self.uavs):
             uav.position = self.initial_uav_positions[idx].copy()
@@ -385,12 +443,15 @@ class Environment:
         # reset connections between UEs and UAVs
         self._update_connections()
 
+        if self.render_mode == "human":
+            self.render()
+
         # return the initial positions of UAVs
-        return [uav.position.copy() for uav in self.uavs]
+        return self.observation, {}
 
     def step(
         self, actions: list[np.ndarray]
-    ) -> tuple[list[np.ndarray], float, bool, dict]:
+    ) -> tuple[np.ndarray, float, bool, bool, dict]:
         """
         Step the environment with the given actions (shape: [num_uavs, 2 + UEcount]).
         Each action contains:
@@ -402,8 +463,8 @@ class Environment:
         for idx, uav in enumerate(self.uavs):
             action = actions[idx]
             distance = (action[0] / 2.0 + 0.5) * self.max_move_distance
-            angle_rad = math.radians(action[1] * self.max_move_angle)
-            uav.move(distance, angle_rad, self.area_size)
+            angle = action[1] * self.max_move_angle
+            uav.move(distance, angle, self.area_size)
 
         # update connections between UEs and UAVs
         self._update_connections()
@@ -419,7 +480,6 @@ class Environment:
 
         # calculate reward and next observation
         reward = -1.0 * system_cost
-        next_obs = [uav.position.copy() for uav in self.uavs]
 
         info = {
             "unconnected_count": unconnected_count,
@@ -428,4 +488,144 @@ class Environment:
             "bottleneck_throughput": throughput,
         }
 
-        return next_obs, reward, False, info
+        if self.render_mode == "human":
+            self.render()
+
+        return self.observation, reward, False, False, info
+
+    def render(self) -> np.ndarray | None:
+        if self.render_mode is None:
+            return None
+
+        # initialize the figure and axes
+        if self.fig is None or self.ax is None:
+            self.fig = Figure(figsize=self.figsize, dpi=200)
+            self.ax = self.fig.add_subplot(1, 1, 1)
+
+        # clear the previous frame
+        self.ax.cla()
+
+        # set the axis limits and labels
+        self.ax.set_xlim(0, self.area_size[0])
+        self.ax.set_ylim(0, self.area_size[1])
+        self.ax.set_xlabel("X (m)")
+        self.ax.set_ylabel("Y (m)")
+        self.ax.grid(True, linestyle="--", alpha=0.5)
+
+        # render Fog nodes
+        fog_x = [fog.position[0] for fog in self.fogs]
+        fog_y = [fog.position[1] for fog in self.fogs]
+        self.ax.scatter(
+            fog_x, fog_y, marker="s", s=100, c="black", label="Fog Node", zorder=5
+        )
+
+        # render UEs (connected and unconnected) with different markers
+        connected_ue_x = [ue.position[0] for ue in self.ues if ue.connected_uav_id != -1]
+        connected_ue_y = [ue.position[1] for ue in self.ues if ue.connected_uav_id != -1]
+        unconnected_ue_x = [
+            ue.position[0] for ue in self.ues if ue.connected_uav_id == -1
+        ]
+        unconnected_ue_y = [
+            ue.position[1] for ue in self.ues if ue.connected_uav_id == -1
+        ]
+
+        self.ax.plot(
+            connected_ue_x,
+            connected_ue_y,
+            "o",
+            color="dodgerblue",
+            markersize=5,
+            label="Connected UE",
+            zorder=4,
+        )
+        self.ax.plot(
+            unconnected_ue_x,
+            unconnected_ue_y,
+            "rx",
+            markersize=6,
+            label="Unconnected UE",
+            zorder=4,
+        )
+
+        # render UAVs
+        uav_colors = ["darkorange", "purple", "green", "magenta"]
+
+        for idx, uav in enumerate(self.uavs):
+            color = uav_colors[idx % len(uav_colors)]
+
+            # render UAV
+            self.ax.scatter(
+                uav.position[0],
+                uav.position[1],
+                marker="^",
+                s=130,
+                c=color,
+                label=f"UAV {uav.id}",
+                zorder=6,
+            )
+
+            # render UAV signal coverage circle
+            circle = patches.Circle(
+                (uav.position[0], uav.position[1]),
+                uav.signal_radius,
+                alpha=0.08,
+                color=color,
+            )
+            self.ax.add_patch(circle)
+
+            # render UE -> UAV
+            for ue in self.ues:
+                if ue.connected_uav_id == uav.id:
+                    self.ax.plot(
+                        [ue.position[0], uav.position[0]],
+                        [ue.position[1], uav.position[1]],
+                        color=color,
+                        linestyle=":",
+                        linewidth=1.0,
+                        alpha=0.6,
+                        zorder=2,
+                    )
+
+            # render UAV -> Fog
+            assigned_fog = min(
+                self.fogs, key=lambda f: self._distance(uav.position, f.position)
+            )
+            self.ax.plot(
+                [uav.position[0], assigned_fog.position[0]],
+                [uav.position[1], assigned_fog.position[1]],
+                color="gray",
+                linestyle="--",
+                linewidth=1.2,
+                alpha=0.5,
+                zorder=3,
+            )
+
+        # render legend and adjust layout
+        self.ax.legend(
+            loc="lower center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncol=4,
+            fontsize=8,
+            frameon=True,
+        )
+
+        self.fig.subplots_adjust(top=0.85, bottom=0.1, left=0.12, right=0.95)
+
+        if self.render_mode == "human":
+            plt.draw()
+            return None
+        elif self.render_mode == "rgb_array":
+            from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+            canvas = FigureCanvasAgg(self.fig)
+            canvas.draw()
+            image_rgba = canvas.buffer_rgba()
+            return np.asarray(image_rgba)[:, :, :3]
+
+    def close(self):
+        self._is_closed = True
+
+        if self.fig is not None:
+            plt.close(self.fig)
+            self.fig = None
+            self.ax = None
