@@ -1,0 +1,12 @@
+# IDE
+.vscode/
+.idea/
+
+# Python-generated files
+__pycache__/
+
+# Virtual environments
+.venv
+
+# model checkpoints
+*.pth
