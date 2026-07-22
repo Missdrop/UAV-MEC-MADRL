@@ -1,35 +1,35 @@
 import numpy as np
 import torch
-from transitions import Transition
 
 
-class Buffer:
+class MultiAgentBuffer:
     def __init__(
         self,
         capacity: int,
-        state_dim: tuple[int, int],
-        action_dim: tuple[int, int],
-        device: str = "cpu",
+        agent_count: int,
+        state_dim: int,
+        action_dim: int,
+        device: torch.device,
     ):
         self.capacity = capacity
-        self.device = torch.device(device)
+        self.device = device
 
         #  pre-allocate memory to avoid dynamic resizing
-        self.states = np.zeros((capacity, *state_dim), dtype=np.float32)
-        self.actions = np.zeros((capacity, *action_dim), dtype=np.float32)
+        self.states = np.zeros((capacity, agent_count, state_dim), dtype=np.float32)
+        self.actions = np.zeros((capacity, agent_count, action_dim), dtype=np.float32)
         self.rewards = np.zeros((capacity, 1), dtype=np.float32)
-        self.next_states = np.zeros((capacity, *state_dim), dtype=np.float32)
+        self.next_states = np.zeros((capacity, agent_count, state_dim), dtype=np.float32)
         self.dones = np.zeros((capacity, 1), dtype=np.float32)
 
         self.index = 0
         self.size = 0
 
-    def push(self, transition: Transition):
-        self.states[self.index] = transition.state
-        self.actions[self.index] = transition.action
-        self.rewards[self.index] = transition.reward
-        self.next_states[self.index] = transition.next_state
-        self.dones[self.index] = transition.done
+    def push(self, state, action, reward, next_state, done):
+        self.states[self.index] = state
+        self.actions[self.index] = action
+        self.rewards[self.index] = reward
+        self.next_states[self.index] = next_state
+        self.dones[self.index] = done
 
         self.index = (self.index + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)

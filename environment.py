@@ -107,9 +107,9 @@ class Environment(gym.Env):
         )
 
         # record UAV initial positions for reset()
-        self.initial_uav_positions: list[np.ndarray] = [
-            uav.position.copy() for uav in self.uavs
-        ]
+        self.initial_uav_positions: np.ndarray = np.array(
+            [uav.position.copy() for uav in self.uavs]
+        )
 
         # Define action space and observation space
         self.action_space = spaces.Box(
@@ -334,7 +334,7 @@ class Environment(gym.Env):
     System cost (U) = E + T + 1/Th_b
     """
 
-    def _system_cost(self, actions: list[np.ndarray]) -> tuple[float, float, float]:
+    def _system_cost(self, actions: np.ndarray) -> tuple[float, float, float]:
         total_energy = 0.0
         total_time = 0.0
         bottleneck_throughput = float("inf")
@@ -448,9 +448,7 @@ class Environment(gym.Env):
         # return the initial positions of UAVs
         return self.observation, {}
 
-    def step(
-        self, actions: list[np.ndarray]
-    ) -> tuple[np.ndarray, float, bool, bool, dict]:
+    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
         """
         Step the environment with the given actions (shape: [num_uavs, 2 + UEcount]).
         Each action contains:
@@ -460,16 +458,16 @@ class Environment(gym.Env):
         """
         # move UAVs according to the actions
         for idx, uav in enumerate(self.uavs):
-            action = actions[idx]
-            distance = (action[0] / 2.0 + 0.5) * self.max_move_distance
-            angle = action[1] * self.max_move_angle
+            act = action[idx]
+            distance = (act[0] / 2.0 + 0.5) * self.max_move_distance
+            angle = act[1] * self.max_move_angle
             uav.move(distance, angle, self.area_size)
 
         # update connections between UEs and UAVs
         self._update_connections()
 
         # calculate the total system cost U = E + T + 1/Th_b
-        energy, time_delay, throughput = self._system_cost(actions)
+        energy, time_delay, throughput = self._system_cost(action)
         system_cost = energy + time_delay + (1.0 / throughput)
 
         # calculate unconnected penalty if the number of unconnected UEs exceeds the coverage threshold
