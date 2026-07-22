@@ -10,7 +10,7 @@ from entities import UAV, UE, FogNode
 
 class Environment(gym.Env):
     """
-    This is a custom environment, which contains:
+    This is a multi-agent environment on UAV offloading task, which contains:
         - multiple UE clusters
         - multiple UAVs
         - multiple fog devices
@@ -31,6 +31,8 @@ class Environment(gym.Env):
         figsize: tuple[int, int] = (6, 6),
         # environment parameters
         area_size: tuple[float, float] = (600.0, 600.0),
+        max_steps: int = 200,
+        terminate_unconnection_persentage: float = 0,  # terminate if more than 30% UEs are unconnected, set 0 to disable
         bandwidth: float = 1.0,  # MHz
         noise_power: float = 1e-13,  # Watts
         unconnected_penalty_factor: float = 10.0,  # punish weight for unconnection (each pair of UE and UAV)
@@ -43,7 +45,6 @@ class Environment(gym.Env):
         uav_cpu_speed: float = 3.0,  # GHz
         uav_cpu_power: float = 0.3,  # Watts
         uav_signal_radius: float = 300.0,  # meters
-        uav_battery_capacity: float = 1000.0,  # Wh
         uav_altitude: float = 60.0,  # meters
         # UAV movement parameters
         max_move_distance: float = 270.0,  # meters
@@ -71,11 +72,8 @@ class Environment(gym.Env):
         self.ax = None
 
         self._is_closed = False
-
-        # pygame rendering attributes
-        self.window = None
-        self.clock = None
-        self.font = None
+        self.max_steps = max_steps
+        self.steps = 0
 
         self.area_size = area_size
         self.bandwidth = bandwidth
@@ -83,6 +81,7 @@ class Environment(gym.Env):
         self.unconnected_penalty_factor = unconnected_penalty_factor
         self.coverage_threshold = coverage_threshold
         self.coverage_penalty_weight = coverage_penalty_weight
+        self.terminate_unconnection_percentage = terminate_unconnection_persentage
 
         self.max_move_distance = max_move_distance
         self.max_move_angle = max_move_angle
@@ -97,7 +96,6 @@ class Environment(gym.Env):
             uav_cpu_speed,
             uav_cpu_power,
             uav_signal_radius,
-            uav_battery_capacity,
             uav_altitude,
             uav_custom_position,
         )
@@ -117,13 +115,13 @@ class Environment(gym.Env):
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(len(self.uavs), 2 + len(self.ues)),
+            shape=(len(self.uavs), 2 + len(self.ues)),  # 2 for distance and angle
             dtype=np.float32,
         )
         self.observation_space = spaces.Box(
             low=0.0,
             high=max(self.area_size),
-            shape=(len(self.uavs), 3),
+            shape=(len(self.uavs), 3),  # 3 for x, y, z positions of each UAV
             dtype=np.float32,
         )
 
@@ -138,7 +136,6 @@ class Environment(gym.Env):
         CPU_speed: float,
         CPU_power: float,
         signal_radius: float,
-        battery_capacity: float,
         uav_altitude: float,
         custom_positions: list[tuple[float, float, float]] | None = None,
     ) -> list[UAV]:
@@ -170,7 +167,6 @@ class Environment(gym.Env):
                     CPU_speed,
                     CPU_power,
                     signal_radius,
-                    battery_capacity,
                 )
             )
         return uavs
@@ -428,6 +424,9 @@ class Environment(gym.Env):
     ) -> tuple[np.ndarray, dict]:
         super().reset(seed=seed)
 
+        # reset step counter
+        self.steps = 0
+
         # reset rendermode
         if options is not None:
             self.render_mode = options.get("render_mode", self.render_mode)
@@ -491,7 +490,16 @@ class Environment(gym.Env):
         if self.render_mode == "human":
             self.render()
 
-        return self.observation, reward, False, False, info
+        # check if terminated or truncated
+        self.steps += 1
+        terminated = (
+            unconnected_count / len(self.ues) >= self.terminate_unconnection_percentage
+            if self.terminate_unconnection_percentage > 0
+            else False
+        )
+        truncated = self.steps >= self.max_steps
+
+        return self.observation, reward, terminated, truncated, info
 
     def render(self) -> np.ndarray | None:
         if self.render_mode is None:

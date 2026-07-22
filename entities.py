@@ -11,7 +11,6 @@ class UAV:
         CPU_speed: float = 3.0,  # GHz
         CPU_power: float = 0.3,  # Watts
         signal_radius: float = 300.0,  # meters
-        battery_capacity: float = 1000.0,  # Wh
     ):
         self.id = id
         self.position = np.array(position, dtype=np.float32)
@@ -19,9 +18,6 @@ class UAV:
         self.CPU_speed = CPU_speed
         self.CPU_power = CPU_power
         self.signal_radius = signal_radius
-
-        # extra parameters
-        self.remaining_battery = battery_capacity
 
     def move(
         self,
