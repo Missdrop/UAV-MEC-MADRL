@@ -9,7 +9,7 @@ class MADDPG:
         self,
         agent_count: int,
         # agent parameters
-        actor_input_dim: int,
+        state_dim: int,
         action_dim: int,
         actor_hidden_dim: int = 64,
         actor_hidden_layer_count: int = 2,
@@ -25,13 +25,13 @@ class MADDPG:
         self.agent_count = agent_count
         self.action_dim = action_dim
 
-        critic_input_dim = agent_count * actor_input_dim + agent_count * action_dim
+        critic_input_dim = agent_count * state_dim + agent_count * action_dim
 
         self.agents: list[Agent] = []
         for id in range(self.agent_count):
             agent = Agent(
                 id=id,
-                actor_input_dim=actor_input_dim,
+                state_dim=state_dim,
                 action_dim=action_dim,
                 actor_hidden_dim=actor_hidden_dim,
                 actor_hidden_layer_count=actor_hidden_layer_count,

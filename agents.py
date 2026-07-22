@@ -9,13 +9,12 @@ class Agent:
     def __init__(
         self,
         id: int,
-        # actor parameters
-        actor_input_dim: int,
+        critic_input_dim: int,
+        state_dim: int,
         action_dim: int,
+        # network parameters
         actor_hidden_dim: int = 64,
         actor_hidden_layer_count: int = 2,
-        # critic parameters
-        critic_input_dim: int = 22,
         critic_hidden_dim: int = 64,
         critic_hidden_layer_count: int = 2,
         # training parameters
@@ -32,7 +31,7 @@ class Agent:
 
         # initialize networks
         self.actor = ActorNetwork(
-            actor_input_dim,
+            state_dim,
             action_dim,
             actor_hidden_dim,
             actor_hidden_layer_count,
@@ -43,7 +42,7 @@ class Agent:
             critic_hidden_layer_count,
         )
         self.target_actor = ActorNetwork(
-            actor_input_dim,
+            state_dim,
             action_dim,
             actor_hidden_dim,
             actor_hidden_layer_count,
