@@ -21,17 +21,19 @@ class Algorithm:
         critic_lr: float = 1e-3,
         gamma: float = 0.99,
         tau: float = 0.005,
+        parameter_type: torch.dtype = torch.float32,
         # MADDPG & MATD3
         exploration_noise: float = 0.1,
         # MATD3
         target_policy_noise: float = 0.2,
         policy_delay_step: int = 2,  # update actor and target networks every n steps
         # memory replay parameters
-        buffer_size: int = 100,
-        batch_size: int = 1000000,
+        buffer_size: int = 1000000,
+        batch_size: int = 100,
         # device
         device: torch.device = torch.device("cpu"),
     ):
+        self.parameter_type = parameter_type
         self.agent_count = agent_count
         self.action_dim = action_dim
         self.device = device
@@ -56,7 +58,7 @@ class Algorithm:
                 critic_lr=critic_lr,
                 tau=tau,
                 device=device,
-                critic_count=1 if algorithm == "DDPG" else 2,
+                critic_count=1 if algorithm == "MADDPG" else 2,
             )
             for id in range(agent_count)
         ]
@@ -73,14 +75,51 @@ class Algorithm:
         # count the training step
         self.step = 0
 
-    def choose_action(self, state: np.ndarray, evaluate: bool = False) -> np.ndarray:
-        actions = [
-            agent.calculate_action(
-                torch.Tensor(state), use_target=True, with_gradiant=False
+    def np_to_tensor(self, np_array: np.ndarray) -> torch.Tensor:
+        return torch.as_tensor(np_array, dtype=self.parameter_type, device=self.device)
+
+    def calculate_actions(
+        self,
+        states: torch.Tensor,  # shape: [batch_size, agent_count, state_dim]
+        agent_id: int = 0,
+        evaluate: bool = False,
+        joint: bool = False,
+        sample: bool = False,
+    ) -> list[torch.Tensor]:
+        """
+        1. evaluate = True -> Current Actor, no grad, noise = 0.0
+        2. joint = True: train Actor -> Current Actor, gradient ONLY for agent_id, noise = 0.0
+        3. sample = True -> Current Actor, no grad, noise = exploration_noise
+        4. all False: train Critic (Target Y) -> Target Actor, no grad, noise = target_policy_noise
+        """
+        # avoid undefined cases
+        if evaluate and (joint or sample):
+            raise ValueError("evaluate cannot be True when joint or sample is True")
+        if sample and joint:
+            raise ValueError("sample cannot be True when joint is True")
+
+        # choose noise
+        if evaluate or joint:
+            noise_mu = 0.0
+        elif sample:
+            noise_mu = self.exploration_noise
+        else:
+            noise_mu = self.target_policy_noise
+
+        use_target = False if (evaluate or joint or sample) else True
+
+        actions_list = []
+        for id, agent in enumerate(self.agents):
+            with_gradient = True if (joint and id == agent_id) else False
+            actions_list.append(
+                agent.calculate_action(
+                    states[:, id, :],
+                    noise_mu=noise_mu,
+                    use_target=use_target,
+                    with_gradiant=with_gradient,
+                )
             )
-            for _, agent in enumerate(self.agents)
-        ]
-        return np.array(actions)  # shape: [agent_count, action_dim]
+        return actions_list  # shape: [agent_count, batch_size, action_dim]
 
     def train(self):
         # if not enough samples in buffer, don't train
@@ -98,6 +137,13 @@ class Algorithm:
             self.batch_size
         )
 
+        # convert into tensors
+        raw_states = self.np_to_tensor(raw_states)
+        raw_actions = self.np_to_tensor(raw_actions)
+        rewards = self.np_to_tensor(rewards)
+        raw_next_states = self.np_to_tensor(raw_next_states)
+        dones = self.np_to_tensor(dones)
+
         # flatten the tensors
         # shape: [batch_size, other_dim]
         states = raw_states.view(self.batch_size, -1)
@@ -106,19 +152,16 @@ class Algorithm:
 
         # calculate next actions
         # shape: [agent_count, batch_size, action_dim]
-        next_actions = [
-            agent.calculate_action(
-                raw_next_states[:, i, :], use_target=True, with_gradiant=False
-            )
-            for i, agent in enumerate(self.agents)
-        ]
+        next_actions = self.calculate_actions(
+            states=raw_next_states,
+        )
         # concat by action dimension
         # shape: [batch_size, agent_count * action_dim]
         next_actions = torch.cat(next_actions, dim=1)
 
         # --- 2. Training process ---
 
-        # Train critic
+        # 1. Train critic
         for _, agent in enumerate(self.agents):
             critic_loss = agent.calculate_critic_loss(
                 states, actions, rewards, next_states, next_actions, dones
@@ -126,35 +169,23 @@ class Algorithm:
             agent.optimize_parameters(critic_loss, "critic")
 
         if self.step % self.policy_delay_step == 0:
-            # Train actor
+            # 2. Train actor
             for id, agent in enumerate(self.agents):
                 # build a joint action list first
                 # the current agent's action is calculated with gradient,
                 # others with no gradient
                 # shape: [agent_count, batch_size, action_dim]
-                joint_actions_list = []
-                for id_, agent_ in enumerate(self.agents):
-                    if id == id_:
-                        action = agent.calculate_action(
-                            raw_states[:, id_, :],
-                            noise_mu=self.exploration_noise,
-                            use_target=False,
-                            with_gradiant=True,
-                        )
-                    else:
-                        action = agent_.calculate_action(
-                            raw_states[:, id_, :],
-                            noise_mu=self.exploration_noise,
-                            use_target=False,
-                            with_gradiant=False,
-                        )
-                    joint_actions_list.append(action)
+                joint_actions_list = self.calculate_actions(
+                    states=raw_states,
+                    agent_id=id,
+                    joint=True,
+                )
                 # shape: [batch_size, agent_count * action_dim]
                 joint_actions = torch.cat(joint_actions_list, dim=1)
 
                 # actor loss = -Q
                 actor_loss = -agent.calculate_q_value(
-                    states, joint_actions, use_target=False, with_gradiant=False
+                    states, joint_actions, use_target=False, with_gradiant=True
                 ).mean()
 
                 agent.optimize_parameters(actor_loss, "actor")

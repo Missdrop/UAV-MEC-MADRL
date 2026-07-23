@@ -91,7 +91,7 @@ class Agent:
     ) -> torch.Tensor:
         actor_net = self.target_actor if use_target else self.actor
         with torch.set_grad_enabled(with_gradiant):
-            action = actor_net(observation)[0]
+            action = actor_net(observation)
 
             # add gaussian noise with (mean = 0, standard deviation = noise_mu)
             if noise_mu > 0:
