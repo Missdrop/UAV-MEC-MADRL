@@ -40,6 +40,7 @@ class Environment(gym.Env):
         unconnected_penalty_factor: float = 10.0,  # punish weight for unconnection (each pair of UE and UAV)
         coverage_threshold: int = 6,  # punish if more than n UEs are unconnected
         coverage_penalty_weight: float = 10.0,  # punish weight for unconnected UEs (with coverage_threshold)
+        reward_scale: float = 0.01,
         # UAV parameters
         uav_count: int = 2,
         uav_custom_position: list[tuple[float, float, float]] | None = None,
@@ -86,6 +87,7 @@ class Environment(gym.Env):
         self.unconnected_penalty_factor = unconnected_penalty_factor
         self.coverage_threshold = coverage_threshold
         self.coverage_penalty_weight = coverage_penalty_weight
+        self.reward_scale = reward_scale
         self.terminate_unconnection_percentage = terminate_unconnection_percentage
 
         self.max_move_distance = max_move_distance
@@ -468,7 +470,8 @@ class Environment(gym.Env):
         # move UAVs according to the actions
         for idx, uav in enumerate(self.uavs):
             act = action[idx]
-            distance = (act[0] / 2.0 + 0.5) * self.max_move_distance
+
+            distance = (act[0] + 1.0) / 2.0 * self.max_move_distance
             angle = act[1] * self.max_move_angle
             uav.move(distance, angle, self.area_size)
 
@@ -485,7 +488,7 @@ class Environment(gym.Env):
             system_cost += self.coverage_penalty_weight * unconnected_count
 
         # calculate reward and next observation
-        reward = -1.0 * system_cost
+        reward = -system_cost
 
         info = {
             "unconnected_count": unconnected_count,
