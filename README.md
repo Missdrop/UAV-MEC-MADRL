@@ -11,7 +11,7 @@ This project uses [**uv**](https://github.com/astral-sh/uv) to manage packages a
 easily installed by:
 
 ```shell
-$ uv sync --all-packages
+$ uv sync
 ```
 
 > This command will automatically install torch+cu128 (CUDA 12.8) for Windows and linux users.
