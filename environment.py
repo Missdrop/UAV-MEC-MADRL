@@ -4,6 +4,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from gymnasium.utils import seeding
 from matplotlib.figure import Figure
 from entities import UAV, UE, FogNode
 
@@ -33,7 +34,7 @@ class Environment(gym.Env):
         random_seed: int | None = None,
         area_size: tuple[float, float] = (600.0, 600.0),
         max_steps: int = 200,
-        terminate_unconnection_persentage: float = 0,  # terminate if more than 30% UEs are unconnected, set 0 to disable
+        terminate_unconnection_percentage: float = 0,  # terminate if more than 30% UEs are unconnected, set 0 to disable
         bandwidth: float = 1.0,  # MHz
         noise_power: float = 1e-13,  # Watts
         unconnected_penalty_factor: float = 10.0,  # punish weight for unconnection (each pair of UE and UAV)
@@ -68,7 +69,8 @@ class Environment(gym.Env):
     ):
         super().__init__()
         if random_seed is not None:
-            self.reset(seed=random_seed)
+            self._np_random, self._np_random_seed = seeding.np_random(random_seed)
+
         self.render_mode = render_mode
         self.figsize = figsize
         self.fig = None
@@ -84,7 +86,7 @@ class Environment(gym.Env):
         self.unconnected_penalty_factor = unconnected_penalty_factor
         self.coverage_threshold = coverage_threshold
         self.coverage_penalty_weight = coverage_penalty_weight
-        self.terminate_unconnection_percentage = terminate_unconnection_persentage
+        self.terminate_unconnection_percentage = terminate_unconnection_percentage
 
         self.max_move_distance = max_move_distance
         self.max_move_angle = max_move_angle
