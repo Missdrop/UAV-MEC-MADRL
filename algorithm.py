@@ -1,7 +1,9 @@
-import torch
+import gymnasium
 import numpy as np
+import torch
 from agents import Agent
 from memory_replay import MultiAgentBuffer
+from utils import Utils
 
 
 class Algorithm:
@@ -21,7 +23,6 @@ class Algorithm:
         critic_lr: float = 1e-3,
         gamma: float = 0.99,
         tau: float = 0.005,
-        parameter_type: torch.dtype = torch.float32,
         # MADDPG & MATD3
         exploration_noise: float = 0.1,
         # MATD3
@@ -32,8 +33,9 @@ class Algorithm:
         batch_size: int = 100,
         # device
         device: torch.device = torch.device("cpu"),
+        utils: Utils = Utils(),
     ):
-        self.parameter_type = parameter_type
+        self.utils = utils
         self.agent_count = agent_count
         self.action_dim = action_dim
         self.device = device
@@ -74,9 +76,9 @@ class Algorithm:
 
         # count the training step
         self.step = 0
-
-    def np_to_tensor(self, np_array: np.ndarray) -> torch.Tensor:
-        return torch.as_tensor(np_array, dtype=self.parameter_type, device=self.device)
+        self.done = True
+        self.state = np.ndarray
+        self.reward = 0.0
 
     def calculate_actions(
         self,
@@ -116,10 +118,36 @@ class Algorithm:
                     states[:, id, :],
                     noise_mu=noise_mu,
                     use_target=use_target,
-                    with_gradiant=with_gradient,
+                    with_gradient=with_gradient,
                 )
             )
         return actions_list  # shape: [agent_count, batch_size, action_dim]
+
+    def explore(self, env: gymnasium.Env) -> tuple[float, bool]:
+        """:return accumulation_reward, done"""
+        state, _ = env.reset()
+        done = False
+        reward_sum = 0.0
+        while not done:
+            # calculate action
+            # shape: [1, num_uavs, 3]
+            state_tensor = self.utils.np_to_tensor(state).unsqueeze(0)
+            # shape: [num_uavs, 1, action_dim]
+            actions = self.calculate_actions(state_tensor, sample=True)
+            actions = self.utils.tensor_to_np(torch.stack(actions, dim=0).squeeze(1))
+
+            # take action
+            next_state, reward, terminated, truncated, info = env.step(actions)
+            done = terminated or truncated
+
+            # push transition to buffer
+            self.buffer.push(state, actions, reward, next_state, done)
+
+            # update current state
+            state = next_state
+            reward_sum += reward
+
+        return reward_sum
 
     def train(self):
         # if not enough samples in buffer, don't train
@@ -138,11 +166,11 @@ class Algorithm:
         )
 
         # convert into tensors
-        raw_states = self.np_to_tensor(raw_states)
-        raw_actions = self.np_to_tensor(raw_actions)
-        rewards = self.np_to_tensor(rewards)
-        raw_next_states = self.np_to_tensor(raw_next_states)
-        dones = self.np_to_tensor(dones)
+        raw_states = self.utils.np_to_tensor(raw_states)
+        raw_actions = self.utils.np_to_tensor(raw_actions)
+        rewards = self.utils.np_to_tensor(rewards)
+        raw_next_states = self.utils.np_to_tensor(raw_next_states)
+        dones = self.utils.np_to_tensor(dones)
 
         # flatten the tensors
         # shape: [batch_size, other_dim]
@@ -185,7 +213,7 @@ class Algorithm:
 
                 # actor loss = -Q
                 actor_loss = -agent.calculate_q_value(
-                    states, joint_actions, use_target=False, with_gradiant=True
+                    states, joint_actions, use_target=False, with_gradient=True
                 ).mean()
 
                 agent.optimize_parameters(actor_loss, "actor")

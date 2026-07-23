@@ -87,10 +87,10 @@ class Agent:
         observation: torch.Tensor,
         use_target: bool,
         noise_mu: float = 0.0,
-        with_gradiant: bool = False,
+        with_gradient: bool = False,
     ) -> torch.Tensor:
         actor_net = self.target_actor if use_target else self.actor
-        with torch.set_grad_enabled(with_gradiant):
+        with torch.set_grad_enabled(with_gradient):
             action = actor_net(observation)
 
             # add gaussian noise with (mean = 0, standard deviation = noise_mu)
@@ -107,9 +107,9 @@ class Agent:
         state: torch.Tensor,
         action: torch.Tensor,
         use_target: bool,
-        with_gradiant: bool = False,
+        with_gradient: bool = False,
     ) -> torch.Tensor:
-        with torch.set_grad_enabled(with_gradiant):
+        with torch.set_grad_enabled(with_gradient):
             critic_nets = self.target_critics if use_target else self.critics
             q_values = [critic_net(state, action) for critic_net in critic_nets]
             # choose the minimum Q value
@@ -127,12 +127,14 @@ class Agent:
             # squeeze(-1) to remove the last 1 dimension
             # shape: [batch_size, 1] -> [batch_size]
             target_q = self.calculate_q_value(
-                next_states, next_actions, use_target=True, with_gradiant=False
+                next_states, next_actions, use_target=True, with_gradient=False
             ).squeeze(-1)
+            rewards = rewards.squeeze(-1)
+            dones = dones.squeeze(-1)
             td_target = rewards + self.gamma * target_q * (1.0 - dones)
 
         q = self.calculate_q_value(
-            states, actions, use_target=False, with_gradiant=True
+            states, actions, use_target=False, with_gradient=True
         ).squeeze(-1)
         critic_loss = torch.nn.functional.mse_loss(q, td_target)
 
