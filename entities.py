@@ -27,15 +27,16 @@ class UAV:
     ):
         """
         Move the UAV with distance, angle.
-        If new position out of range, stay at the current position.
+        Clip the new position to the map boundary.
         """
         new_x = self.position[0] + distance * math.cos(math.radians(angle))
         new_y = self.position[1] + distance * math.sin(math.radians(angle))
 
-        # check out of range
-        if 0.0 <= new_x <= area_size[0] and 0.0 <= new_y <= area_size[1]:
-            self.position[0] = new_x
-            self.position[1] = new_y
+        # Rejecting the whole move at a boundary makes many consecutive
+        # actions produce exactly the same frame and gives the policy a flat transition.
+        # Clipping preserves the feasible component of the move.
+        self.position[0] = np.clip(new_x, 0.0, area_size[0])
+        self.position[1] = np.clip(new_y, 0.0, area_size[1])
 
 
 class UE:
