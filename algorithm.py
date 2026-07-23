@@ -33,9 +33,9 @@ class Algorithm:
         batch_size: int = 100,
         # device
         device: torch.device = torch.device("cpu"),
-        utils: Utils = Utils(),
+        utils: Utils | None = None,
     ):
-        self.utils = utils
+        self.utils = utils if utils is not None else Utils(device=device)
         self.agent_count = agent_count
         self.action_dim = action_dim
         self.device = device
@@ -77,77 +77,59 @@ class Algorithm:
         # count the training step
         self.step = 0
         self.done = True
-        self.state = np.ndarray
-        self.reward = 0.0
+        self.state: np.ndarray = np.zeros(0)
 
-    def calculate_actions(
+    def explore(
         self,
-        states: torch.Tensor,  # shape: [batch_size, agent_count, state_dim]
-        agent_id: int = 0,
+        env: gymnasium.Env,
+        render: bool = False,
         evaluate: bool = False,
-        joint: bool = False,
-        sample: bool = False,
-    ) -> list[torch.Tensor]:
-        """
-        1. evaluate = True -> Current Actor, no grad, noise = 0.0
-        2. joint = True: train Actor -> Current Actor, gradient ONLY for agent_id, noise = 0.0
-        3. sample = True -> Current Actor, no grad, noise = exploration_noise
-        4. all False: train Critic (Target Y) -> Target Actor, no grad, noise = target_policy_noise
-        """
-        # avoid undefined cases
-        if evaluate and (joint or sample):
-            raise ValueError("evaluate cannot be True when joint or sample is True")
-        if sample and joint:
-            raise ValueError("sample cannot be True when joint is True")
+        store_transition: bool | None = None,
+        action_noise: float | None = None,
+    ):
+        if self.done:
+            self.state, _ = env.reset()
+            self.done = False
 
-        # choose noise
-        if evaluate or joint:
-            noise_mu = 0.0
-        elif sample:
-            noise_mu = self.exploration_noise
-        else:
-            noise_mu = self.target_policy_noise
+        if store_transition is None:
+            store_transition = not evaluate
 
-        use_target = False if (evaluate or joint or sample) else True
+        noise_mu = (
+            action_noise
+            if action_noise is not None
+            else (0.0 if evaluate else self.exploration_noise)
+        )
 
-        actions_list = []
-        for id, agent in enumerate(self.agents):
-            with_gradient = True if (joint and id == agent_id) else False
-            actions_list.append(
-                agent.calculate_action(
-                    states[:, id, :],
-                    noise_mu=noise_mu,
-                    use_target=use_target,
-                    with_gradient=with_gradient,
-                )
+        # calculate action
+        # state_tensor shape: [agent_count, state_dim]
+        state_tensor = self.utils.np_to_tensor(self.state)
+        # each action shape: [1, action_dim]
+        actions = [
+            agent.calculate_action(
+                state_tensor[i : i + 1],
+                noise_mu=noise_mu,
+                use_target=False,
             )
-        return actions_list  # shape: [agent_count, batch_size, action_dim]
+            for i, agent in enumerate(self.agents)
+        ]
+        # actions shape: [agent_count, action_dim]
+        actions = self.utils.tensor_to_np(torch.cat(actions, dim=0))
 
-    def explore(self, env: gymnasium.Env) -> tuple[float, bool]:
-        """:return accumulation_reward, done"""
-        state, _ = env.reset()
-        done = False
-        reward_sum = 0.0
-        while not done:
-            # calculate action
-            # shape: [1, num_uavs, 3]
-            state_tensor = self.utils.np_to_tensor(state).unsqueeze(0)
-            # shape: [num_uavs, 1, action_dim]
-            actions = self.calculate_actions(state_tensor, sample=True)
-            actions = self.utils.tensor_to_np(torch.stack(actions, dim=0).squeeze(1))
+        # take action
+        next_state, reward, terminated, truncated, info = env.step(actions)
+        self.done = terminated or truncated
 
-            # take action
-            next_state, reward, terminated, truncated, info = env.step(actions)
-            done = terminated or truncated
+        # push transition to buffer
+        if store_transition:
+            self.buffer.push(self.state, actions, reward, next_state, self.done)
 
-            # push transition to buffer
-            self.buffer.push(state, actions, reward, next_state, done)
+        # update current state
+        self.state = next_state
 
-            # update current state
-            state = next_state
-            reward_sum += reward
+        if render:
+            return reward, self.done, env.render()
 
-        return reward_sum
+        return reward, self.done, None
 
     def train(self):
         # if not enough samples in buffer, don't train
@@ -180,9 +162,15 @@ class Algorithm:
 
         # calculate next actions
         # shape: [agent_count, batch_size, action_dim]
-        next_actions = self.calculate_actions(
-            states=raw_next_states,
-        )
+        next_actions = [
+            agent.calculate_action(
+                raw_next_states[:, i, :],
+                noise_mu=self.target_policy_noise,
+                use_target=True,
+                with_gradient=False,
+            )
+            for i, agent in enumerate(self.agents)
+        ]
         # concat by action dimension
         # shape: [batch_size, agent_count * action_dim]
         next_actions = torch.cat(next_actions, dim=1)
@@ -203,11 +191,22 @@ class Algorithm:
                 # the current agent's action is calculated with gradient,
                 # others with no gradient
                 # shape: [agent_count, batch_size, action_dim]
-                joint_actions_list = self.calculate_actions(
-                    states=raw_states,
-                    agent_id=id,
-                    joint=True,
-                )
+                joint_actions_list = []
+                for id_, agent_ in enumerate(self.agents):
+                    if id == id_:
+                        action = agent.calculate_action(
+                            raw_states[:, id_, :],
+                            use_target=False,
+                            with_gradient=True,
+                        )
+                    else:
+                        action = agent_.calculate_action(
+                            raw_states[:, id_, :],
+                            use_target=False,
+                            with_gradient=False,
+                        )
+                    joint_actions_list.append(action)
+
                 # shape: [batch_size, agent_count * action_dim]
                 joint_actions = torch.cat(joint_actions_list, dim=1)
 
@@ -218,8 +217,9 @@ class Algorithm:
 
                 agent.optimize_parameters(actor_loss, "actor")
 
-                # update parameters (actor and critic) to target networks
-                agent.update_network_parameters()
+        # update parameters (actor and critic) to target networks
+        for agent in self.agents:
+            agent.update_network_parameters()
 
     def save_checkpoint(self, directory: str):
         for agent in self.agents:

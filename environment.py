@@ -512,7 +512,7 @@ class Environment(gym.Env):
 
         # initialize the figure and axes
         if self.fig is None or self.ax is None:
-            self.fig = Figure(figsize=self.figsize, dpi=200)
+            self.fig = Figure(figsize=self.figsize, dpi=150)
             self.ax = self.fig.add_subplot(1, 1, 1)
 
         # clear the previous frame
