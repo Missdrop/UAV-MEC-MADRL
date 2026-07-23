@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 
 
 class MultiAgentBuffer:
@@ -9,10 +8,8 @@ class MultiAgentBuffer:
         agent_count: int,
         state_dim: int,
         action_dim: int,
-        device: torch.device,
     ):
         self.capacity = capacity
-        self.device = device
 
         #  pre-allocate memory to avoid dynamic resizing
         self.states = np.zeros((capacity, agent_count, state_dim), dtype=np.float32)
@@ -35,14 +32,13 @@ class MultiAgentBuffer:
         self.size = min(self.size + 1, self.capacity)
 
     def sample(self, batch_size: int):
-        # sample and convert to torch tensors
         indices = np.random.randint(0, self.size, size=batch_size)
 
-        states = torch.from_numpy(self.states[indices]).to(self.device)
-        actions = torch.from_numpy(self.actions[indices]).to(self.device)
-        rewards = torch.from_numpy(self.rewards[indices]).to(self.device)
-        next_states = torch.from_numpy(self.next_states[indices]).to(self.device)
-        dones = torch.from_numpy(self.dones[indices]).to(self.device)
+        states = self.states[indices]
+        actions = self.actions[indices]
+        rewards = self.rewards[indices]
+        next_states = self.next_states[indices]
+        dones = self.dones[indices]
 
         return states, actions, rewards, next_states, dones
 

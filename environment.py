@@ -627,6 +627,7 @@ class Environment(gym.Env):
             canvas.draw()
             image_rgba = canvas.buffer_rgba()
             return np.asarray(image_rgba)[:, :, :3]
+        return None
 
     def close(self):
         self._is_closed = True

@@ -24,12 +24,13 @@ class Agent:
         critic_lr: float = 1e-3,
         gamma: float = 0.99,  # discount factor
         tau: float = 0.005,  # soft update parameter
-        noise_mu: float = 0.1,  # exploration noise (standard deviation of the gaussian distribution)
+        # device
+        device: torch.device = torch.device("cpu"),
     ):
         self.gamma = gamma
         self.tau = tau
         self.id = id
-        self.noise_mu = noise_mu
+        self.device = device
 
         # initialize networks
         self.actor = ActorNetwork(
@@ -67,6 +68,11 @@ class Agent:
                 for _ in range(critic_count)
             ]
         )
+        # move networks to device
+        self.actor.to(device)
+        self.critics.to(device)
+        self.target_actor.to(device)
+        self.target_critics.to(device)
 
         # copy parameters to target networks
         self.target_actor.load_state_dict(self.actor.state_dict())
@@ -75,19 +81,6 @@ class Agent:
         # initialize optimizers
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
         self.critic_optimizer = optim.Adam(self.critics.parameters(), lr=critic_lr)
-
-    def to(self, device: torch.device):
-        self.actor.to(device)
-        self.critics.to(device)
-        self.target_actor.to(device)
-        self.target_critics.to(device)
-
-    def eval(self):
-        self.actor.eval()
-        self.critics.eval()
-        self.target_actor.eval()
-        self.target_critics.eval()
-        self.noise = 0.0  # Disable noise during evaluation
 
     def calculate_action(
         self,
@@ -127,6 +120,37 @@ class Agent:
             )
         return q_value
 
+    def calculate_critic_loss(
+        self, states, actions, rewards, next_states, next_actions, dones
+    ):
+        with torch.no_grad():
+            # squeeze(-1) to remove the last 1 dimension
+            # shape: [batch_size, 1] -> [batch_size]
+            target_q = self.calculate_q_value(
+                next_states, next_actions, use_target=True, with_gradiant=False
+            ).squeeze(-1)
+            td_target = rewards + self.gamma * target_q * (1.0 - dones)
+
+        q = self.calculate_q_value(
+            states, actions, use_target=False, with_gradiant=True
+        ).squeeze(-1)
+        critic_loss = torch.nn.functional.mse_loss(q, td_target)
+
+        return critic_loss
+
+    def optimize_parameters(self, loss, network: str):
+        """Optimize the parameters of the specified network. ("actor" or "critic")"""
+        if network == "actor":
+            optimizer = self.actor_optimizer
+        elif network == "critic":
+            optimizer = self.critic_optimizer
+        else:
+            raise ValueError("Invalid network type")
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
     def update_network_parameters(self):
         with torch.no_grad():
             # Update target actor
@@ -164,30 +188,28 @@ class Agent:
             os.path.join(directory, f"agent{self.id}_target_critic.pth"),
         )
 
-    def load_models(
-        self, directory: str, map_location: torch.device = torch.device("cpu")
-    ):
+    def load_models(self, directory: str):
         self.actor.load_state_dict(
             torch.load(
                 os.path.join(directory, f"agent{self.id}_actor.pth"),
-                map_location=map_location,
+                map_location=self.device,
             )
         )
         self.target_actor.load_state_dict(
             torch.load(
                 os.path.join(directory, f"agent{self.id}_target_actor.pth"),
-                map_location=map_location,
+                map_location=self.device,
             )
         )
         self.critics.load_state_dict(
             torch.load(
                 os.path.join(directory, f"agent{self.id}_critic.pth"),
-                map_location=map_location,
+                map_location=self.device,
             )
         )
         self.target_critics.load_state_dict(
             torch.load(
                 os.path.join(directory, f"agent{self.id}_target_critic.pth"),
-                map_location=map_location,
+                map_location=self.device,
             )
         )
