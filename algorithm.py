@@ -84,21 +84,12 @@ class Algorithm:
         env: gymnasium.Env,
         render: bool = False,
         evaluate: bool = False,
-        store_transition: bool | None = None,
-        action_noise: float | None = None,
     ):
         if self.done:
             self.state, _ = env.reset()
             self.done = False
 
-        if store_transition is None:
-            store_transition = not evaluate
-
-        noise_mu = (
-            action_noise
-            if action_noise is not None
-            else (0.0 if evaluate else self.exploration_noise)
-        )
+        noise_mu = 0.0 if evaluate else self.exploration_noise
 
         # calculate action
         # state_tensor shape: [agent_count, state_dim]
@@ -120,7 +111,7 @@ class Algorithm:
         self.done = terminated or truncated
 
         # push transition to buffer
-        if store_transition:
+        if not evaluate:
             self.buffer.push(self.state, actions, reward, next_state, self.done)
 
         # update current state
