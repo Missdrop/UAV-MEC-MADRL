@@ -30,6 +30,7 @@ class Environment(gym.Env):
         render_mode: str | None = None,
         figsize: tuple[int, int] = (6, 6),
         # environment parameters
+        random_seed: int | None = None,
         area_size: tuple[float, float] = (600.0, 600.0),
         max_steps: int = 200,
         terminate_unconnection_persentage: float = 0,  # terminate if more than 30% UEs are unconnected, set 0 to disable
@@ -66,6 +67,8 @@ class Environment(gym.Env):
         fog_altitude: float = 100.0,  # meters
     ):
         super().__init__()
+        if random_seed is not None:
+            self.reset(seed=random_seed)
         self.render_mode = render_mode
         self.figsize = figsize
         self.fig = None
@@ -151,8 +154,8 @@ class Environment(gym.Env):
             # [Case 2]
             positions = [
                 (
-                    float(np.random.uniform(0, self.area_size[0])),
-                    float(np.random.uniform(0, self.area_size[1])),
+                    float(self.np_random.uniform(0, self.area_size[0])),
+                    float(self.np_random.uniform(0, self.area_size[1])),
                     uav_altitude,  # UAV has a fixed altitude
                 )
                 for _ in range(num_uavs)
@@ -186,10 +189,14 @@ class Environment(gym.Env):
         centers = [
             (
                 float(
-                    np.random.uniform(cluster_radius, self.area_size[0] - cluster_radius)
+                    self.np_random.uniform(
+                        cluster_radius, self.area_size[0] - cluster_radius
+                    )
                 ),
                 float(
-                    np.random.uniform(cluster_radius, self.area_size[1] - cluster_radius)
+                    self.np_random.uniform(
+                        cluster_radius, self.area_size[1] - cluster_radius
+                    )
                 ),
             )
             for _ in range(cluster_count)
@@ -205,8 +212,8 @@ class Environment(gym.Env):
 
             for _ in range(count):
                 # use sqrt to ensure uniform distribution within the circle
-                r = cluster_radius * math.sqrt(np.random.uniform(0, 1))
-                theta = np.random.uniform(0, 2 * math.pi)
+                r = cluster_radius * math.sqrt(self.np_random.uniform(0, 1))
+                theta = self.np_random.uniform(0, 2 * math.pi)
 
                 x = round(center_x + r * math.cos(theta), 2)
                 y = round(center_y + r * math.sin(theta), 2)
@@ -231,8 +238,8 @@ class Environment(gym.Env):
         else:
             positions = [
                 (
-                    float(np.random.uniform(0, self.area_size[0])),
-                    float(np.random.uniform(0, self.area_size[1])),
+                    float(self.np_random.uniform(0, self.area_size[0])),
+                    float(self.np_random.uniform(0, self.area_size[1])),
                     0.0,  # UE height is always 0m (ground level)
                 )
                 for _ in range(num_ues)
@@ -255,8 +262,8 @@ class Environment(gym.Env):
         else:
             positions = [
                 (
-                    float(np.random.uniform(0, self.area_size[0])),
-                    float(np.random.uniform(0, self.area_size[1])),
+                    float(self.np_random.uniform(0, self.area_size[0])),
+                    float(self.np_random.uniform(0, self.area_size[1])),
                     fog_altitude,  # Fog node has a fixed altitude
                 )
                 for _ in range(num_fogs)
