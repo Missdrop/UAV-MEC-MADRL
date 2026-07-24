@@ -1,8 +1,7 @@
 import os
-import torch
-import torch.optim as optim
-import torch.nn as nn
 
+import torch
+from torch import nn, optim
 
 from networks import ActorNetwork, CriticNetwork
 
@@ -10,6 +9,7 @@ from networks import ActorNetwork, CriticNetwork
 class SharedCritic:
     def __init__(
         self,
+        device: torch.device,
         agent_count: int,
         state_dim: int,
         action_dim: int,
@@ -19,7 +19,6 @@ class SharedCritic:
         critic_lr: float = 1e-3,
         gamma: float = 0.99,
         tau: float = 0.005,
-        device: torch.device = torch.device("cpu"),
     ):
         self.gamma = gamma
         self.tau = tau
@@ -160,6 +159,8 @@ class SharedCritic:
 class Agent:
     def __init__(
         self,
+        # device
+        device: torch.device,
         id: int,
         agent_count: int,
         state_dim: int,
@@ -176,8 +177,6 @@ class Agent:
         critic_lr: float = 1e-3,
         gamma: float = 0.99,  # discount factor
         tau: float = 0.005,  # soft update parameter
-        # device
-        device: torch.device = torch.device("cpu"),
     ):
         self.gamma = gamma
         self.tau = tau

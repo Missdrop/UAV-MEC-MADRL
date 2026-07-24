@@ -1,11 +1,14 @@
-import numpy as np
 import math
+from typing import ClassVar
+
 import gymnasium as gym
-from gymnasium import spaces
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import numpy as np
+from gymnasium import spaces
 from gymnasium.utils import seeding
+from matplotlib import patches
 from matplotlib.figure import Figure
+
 from entities import UAV, UE, FogNode
 
 
@@ -20,7 +23,7 @@ class Environment(gym.Env):
     and the UAVs can only move in the x-y plane.
     """
 
-    metadata = {
+    metadata: ClassVar[dict] = {
         "render_modes": ["human", "rgb_array"],
         "render_fps": 30,
     }

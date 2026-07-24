@@ -6,7 +6,7 @@ from memory_replay import MultiAgentBuffer
 
 
 class Utils:
-    def __init__(self, dtype=torch.float32, device=torch.device("cpu")):
+    def __init__(self, device: torch.device, dtype=torch.float32):
         self.dtype = dtype
         self.device = device
 
@@ -20,6 +20,8 @@ class Utils:
 class Algorithm:
     def __init__(
         self,
+        # device
+        device: torch.device,
         # algorithm
         algorithm: str,  # "MADDPG" or "MATD3"
         # agent parameters
@@ -43,8 +45,6 @@ class Algorithm:
         # memory replay parameters
         buffer_size: int = 1000000,
         batch_size: int = 100,
-        # device
-        device: torch.device = torch.device("cpu"),
         dtype: torch.dtype = torch.float32,
     ):
         if algorithm not in ("MADDPG", "MATD3"):
@@ -147,7 +147,7 @@ class Algorithm:
         actions = self.utils.tensor_to_np(torch.cat(actions, dim=0))
 
         # take action
-        next_state, reward, terminated, truncated, info = env.step(actions)
+        next_state, reward, terminated, truncated, _ = env.step(actions)
         current_done = terminated or truncated
 
         # push transition to buffer
