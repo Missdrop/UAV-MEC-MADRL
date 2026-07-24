@@ -3,16 +3,17 @@ name = "madrl-uav-mec"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
-    "gymnasium>=1.3.0",
-    "matplotlib>=3.11.0",
-    "numpy>=2.4.6",
-    "torch>=2.11.0",
     # Jupyter support
     "ipykernel>=7.3.0",
     "ipywidgets>=8.1.0",
     # ruff for linting
     "ruff>=0.15.22",
-    "pettingzoo[sisl]>=1.26.1",
+    "gymnasium>=1.3.0",
+    "matplotlib>=3.11.0",
+    "imageio>=2.37.4",
+    "numpy>=2.4.6",
+    "torch>=2.11.0",
+
 ]
 
 [[tool.uv.index]]
