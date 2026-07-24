@@ -37,10 +37,11 @@ class Environment(gym.Env):
         terminate_unconnection_percentage: float = 0,  # terminate if more than 30% UEs are unconnected, set 0 to disable
         bandwidth: float = 1.0,  # MHz
         noise_power: float = 1e-13,  # Watts
-        unconnected_penalty_factor: float = 10.0,  # punish weight for unconnection (each pair of UE and UAV)
+        unconnected_penalty_factor: float = 100.0,  # cost for each unserved UE
         coverage_threshold: int = 6,  # punish if more than n UEs are unconnected
         coverage_penalty_weight: float = 10.0,  # punish weight for unconnected UEs (with coverage_threshold)
         reward_scale: float = 0.01,
+        boundary_penalty_weight: float = 10.0,
         # UAV parameters
         uav_count: int = 2,
         uav_custom_position: list[tuple[float, float, float]] | None = None,
@@ -50,7 +51,7 @@ class Environment(gym.Env):
         uav_signal_radius: float = 300.0,  # meters
         uav_altitude: float = 60.0,  # meters
         # UAV movement parameters
-        max_move_distance: float = 270.0,  # meters
+        max_move_distance: float = 30.0,  # meters
         max_move_angle: float = 180.0,  # degrees
         # UE parameters
         ue_count: int = 20,
@@ -88,6 +89,7 @@ class Environment(gym.Env):
         self.coverage_threshold = coverage_threshold
         self.coverage_penalty_weight = coverage_penalty_weight
         self.reward_scale = reward_scale
+        self.boundary_penalty_weight = boundary_penalty_weight
         self.terminate_unconnection_percentage = terminate_unconnection_percentage
 
         self.max_move_distance = max_move_distance
@@ -125,10 +127,17 @@ class Environment(gym.Env):
             shape=(len(self.uavs), 2 + len(self.ues)),  # 2 for distance and angle
             dtype=np.float32,
         )
+        # Per-agent normalized observation:
+        # self xyz + other-UAV relative xyz +
+        # each UE(relative xyz, task cycles, task size, connected-to-self, unconnected) +
+        # each Fog relative xyz.
+        self.obs_dim = (
+            3 + 3 * (len(self.uavs) - 1) + 7 * len(self.ues) + 3 * len(self.fogs)
+        )
         self.observation_space = spaces.Box(
-            low=0.0,
-            high=max(self.area_size),
-            shape=(len(self.uavs), 3),  # 3 for x, y, z positions of each UAV
+            low=-1.0,
+            high=1.0,
+            shape=(len(self.uavs), self.obs_dim),
             dtype=np.float32,
         )
 
@@ -329,12 +338,51 @@ class Environment(gym.Env):
     @property
     def observation(self) -> np.ndarray:
         """
-        Get the current observation for all UAVs.
-        The observation contains:
-            - UAV position (x, y, z) for each UAV
-        Shape: [num_uavs, 3]
+        Return normalized local-centered observations for all UAVs.
+
+        Every actor can see geometry, tasks and associations needed to make a
+        decision. Relative positions are centered on that actor and normalized
+        to [-1, 1], avoiding tanh saturation from raw 0..600 coordinates.
         """
-        return np.array([uav.position.copy() for uav in self.uavs], dtype=np.float32)
+        xy_scale = max(self.area_size)
+        task_cycles_mid = sum(self.cpu_cycles_range) / 2.0
+        task_cycles_half = max(
+            1.0, (self.cpu_cycles_range[1] - self.cpu_cycles_range[0]) / 2.0
+        )
+        task_size_mid = sum(self.data_size_range) / 2.0
+        task_size_half = max(
+            1.0, (self.data_size_range[1] - self.data_size_range[0]) / 2.0
+        )
+        observations = []
+        for agent in self.uavs:
+            features = [
+                2.0 * agent.position[0] / self.area_size[0] - 1.0,
+                2.0 * agent.position[1] / self.area_size[1] - 1.0,
+                agent.position[2] / xy_scale,
+            ]
+            for other in self.uavs:
+                if other.id != agent.id:
+                    features.extend(
+                        ((other.position - agent.position) / xy_scale).tolist()
+                    )
+            for ue in self.ues:
+                rel = (ue.position - agent.position) / xy_scale
+                cycles, size = (
+                    ue.task if ue.task is not None else (task_cycles_mid, task_size_mid)
+                )
+                features.extend(
+                    [
+                        *rel.tolist(),
+                        (cycles - task_cycles_mid) / task_cycles_half,
+                        (size - task_size_mid) / task_size_half,
+                        1.0 if ue.connected_uav_id == agent.id else 0.0,
+                        1.0 if ue.connected_uav_id == -1 else 0.0,
+                    ]
+                )
+            for fog in self.fogs:
+                features.extend(((fog.position - agent.position) / xy_scale).tolist())
+            observations.append(features)
+        return np.clip(np.asarray(observations, dtype=np.float32), -1.0, 1.0)
 
     """
     System cost calculation
@@ -350,80 +398,52 @@ class Environment(gym.Env):
         total_time = 0.0
         bottleneck_throughput = float("inf")
 
-        for i, uav in enumerate(self.uavs):
-            action = actions[i]
-            # map [-1, 1] to [0, 1] for offload ratios
-            offload_ratios = [action[j] / 2.0 + 0.5 for j in range(2, 2 + len(self.ues))]
-
-            # choose the nearest fog node for each UAV
+        # Each UE task is processed exactly once, by its associated UAV.
+        for j, ue in enumerate(self.ues):
+            if ue.connected_uav_id == -1 or ue.task is None:
+                continue
+            uav = self.uavs[ue.connected_uav_id]
+            x = float(actions[uav.id, 2 + j] / 2.0 + 0.5)
             assigned_fog = min(
                 self.fogs, key=lambda fog: self._distance(uav.position, fog.position)
             )
-            # calculate the data rate between UAV and Fog node
             dist_uav_fog = self._distance(uav.position, assigned_fog.position)
             rate_uav_fog = self._data_rate(
                 self._channel_gain(dist_uav_fog), uav.transmit_power
             )
+            cpu_cycles_per_bit, data_size_mb = ue.task
+            dist_ue_uav = self._distance(ue.position, uav.position)
+            rate_ue_uav = self._data_rate(
+                self._channel_gain(dist_ue_uav), ue.transmit_power
+            )
+            time_upload = data_size_mb / rate_ue_uav
+            energy_upload = ue.transmit_power * time_upload
+            time_uav_compute = (
+                x * cpu_cycles_per_bit * data_size_mb / uav.CPU_speed * 1e-3
+            )
+            energy_uav_compute = uav.CPU_power * time_uav_compute
+            time_fog_transfer = (1.0 - x) * data_size_mb / rate_uav_fog
+            energy_fog_transfer = uav.transmit_power * time_fog_transfer
+            time_fog_compute = (
+                (1.0 - x)
+                * cpu_cycles_per_bit
+                * data_size_mb
+                / assigned_fog.CPU_speed
+                * 1e-3
+            )
+            bottleneck_throughput = min(
+                bottleneck_throughput,
+                rate_ue_uav if x >= 1.0 - 1e-6 else min(rate_ue_uav, rate_uav_fog),
+            )
+            total_energy += energy_upload + energy_uav_compute + energy_fog_transfer
+            total_time += (
+                time_upload + time_uav_compute + time_fog_transfer + time_fog_compute
+            )
 
-            for j, ue in enumerate(self.ues):
-                # get task parameters
-                if ue.task is None:
-                    continue
-                cpu_cycles_per_bit, data_size_mb = ue.task
-
-                # get the offload ratio for current UE
-                x = offload_ratios[j]
-
-                # 1. UE -> UAV upload phase
-                # calculate upload time and energy
-                dist_ue_uav = self._distance(ue.position, uav.position)
-                rate_ue_uav = self._data_rate(
-                    self._channel_gain(dist_ue_uav), ue.transmit_power
-                )
-                time_upload = data_size_mb / rate_ue_uav
-                energy_upload = ue.transmit_power * time_upload
-
-                # 2. UAV local computation phase
-                # calculate computation time and energy
-                time_uav_compute = (
-                    (x * cpu_cycles_per_bit * data_size_mb)
-                    / uav.CPU_speed
-                    * 1e-3  # convert GHz to MHz
-                )
-                energy_uav_compute = uav.CPU_power * time_uav_compute
-
-                # 3. UAV -> Fog upload phase
-                # calculate upload time and energy
-                time_fog_transfer = ((1.0 - x) * data_size_mb) / rate_uav_fog
-                energy_fog_transfer = uav.transmit_power * time_fog_transfer
-                time_fog_compute = (
-                    ((1.0 - x) * cpu_cycles_per_bit * data_size_mb)
-                    / assigned_fog.CPU_speed
-                    * 1e-3  # convert GHz to MHz
-                )
-
-                # update bottleneck throughput (Th_b)
-                if x == 1.0:
-                    bottleneck_throughput = min(bottleneck_throughput, rate_ue_uav)
-                else:
-                    bottleneck_throughput = min(
-                        bottleneck_throughput, min(rate_ue_uav, rate_uav_fog)
-                    )
-
-                # calculate total energy and time with unconnected penalty
-                penalty = (
-                    1.0
-                    if ue.connected_uav_id == uav.id
-                    else self.unconnected_penalty_factor
-                )
-
-                total_energy += penalty * (
-                    energy_upload + energy_uav_compute + energy_fog_transfer
-                )
-                total_time += penalty * (
-                    time_upload + time_uav_compute + time_fog_transfer + time_fog_compute
-                )
-
+        # No connected UE has no meaningful bottleneck throughput. Disconnection
+        # is handled explicitly in step(), so do not create a singular 1/0 cost.
+        if not np.isfinite(bottleneck_throughput):
+            bottleneck_throughput = 0.0
         return total_energy, total_time, bottleneck_throughput
 
     """
@@ -448,7 +468,7 @@ class Environment(gym.Env):
 
         # reset tasks for UEs
         for ue in self.ues:
-            ue.generate_task(self.cpu_cycles_range, self.data_size_range)
+            ue.generate_task(self.cpu_cycles_range, self.data_size_range, self.np_random)
 
         # reset connections between UEs and UAVs
         self._update_connections()
@@ -463,38 +483,46 @@ class Environment(gym.Env):
         """
         Step the environment with the given actions (shape: [num_uavs, 2 + UEcount]).
         Each action contains:
-            - distance: [-1, 1] -> [0, max_move_distance]
-            - angle: [-1, 1] -> [-max_move_angle, max_move_angle]
+            - movement x/y vector, normalized to unit length if necessary
             - offload ratios for each UE: [-1, 1] -> [0, 1]
         """
-        # move UAVs according to the actions
+        boundary_violation = 0.0
         for idx, uav in enumerate(self.uavs):
             act = action[idx]
-
-            distance = (act[0] + 1.0) / 2.0 * self.max_move_distance
-            angle = act[1] * self.max_move_angle
-            uav.move(distance, angle, self.area_size)
+            direction = np.asarray(act[:2], dtype=np.float32)
+            norm = float(np.linalg.norm(direction))
+            if norm > 1.0:
+                direction /= norm
+            delta = direction * self.max_move_distance
+            boundary_violation += uav.move(
+                float(delta[0]), float(delta[1]), self.area_size
+            )
 
         # update connections between UEs and UAVs
         self._update_connections()
 
         # calculate the total system cost U = E + T + 1/Th_b
         energy, time_delay, throughput = self._system_cost(action)
-        system_cost = energy + time_delay + (1.0 / throughput)
+        throughput_cost = 1.0 / throughput if throughput > 0.0 else 0.0
+        system_cost = energy + time_delay + throughput_cost
 
         # calculate unconnected penalty if the number of unconnected UEs exceeds the coverage threshold
         unconnected_count = sum(1 for ue in self.ues if ue.connected_uav_id == -1)
+        system_cost += self.unconnected_penalty_factor * unconnected_count
         if unconnected_count > self.coverage_threshold:
             system_cost += self.coverage_penalty_weight * unconnected_count
+        system_cost += self.boundary_penalty_weight * boundary_violation
 
-        # calculate reward and next observation
-        reward = -system_cost
+        # scaled reward
+        reward = -self.reward_scale * system_cost
 
         info = {
             "unconnected_count": unconnected_count,
             "total_energy": energy,
             "total_time": time_delay,
             "bottleneck_throughput": throughput,
+            "boundary_violation": boundary_violation,
+            "raw_system_cost": system_cost,
         }
 
         if self.render_mode == "human":
@@ -648,3 +676,4 @@ class Environment(gym.Env):
             plt.close(self.fig)
             self.fig = None
             self.ax = None
+

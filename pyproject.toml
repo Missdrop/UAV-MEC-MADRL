@@ -12,6 +12,7 @@ dependencies = [
     "ipywidgets>=8.1.0",
     # ruff for linting
     "ruff>=0.15.22",
+    "pettingzoo[sisl]>=1.26.1",
 ]
 
 [[tool.uv.index]]

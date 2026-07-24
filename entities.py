@@ -21,22 +21,22 @@ class UAV:
 
     def move(
         self,
-        distance: float,
-        angle: float,  # degree
+        delta_x: float,
+        delta_y: float,
         area_size: tuple[float, float],
-    ):
+    ) -> float:
         """
-        Move the UAV with distance, angle.
-        Clip the new position to the map boundary.
-        """
-        new_x = self.position[0] + distance * math.cos(math.radians(angle))
-        new_y = self.position[1] + distance * math.sin(math.radians(angle))
+        Move by a Cartesian displacement and return the clipped distance.
 
-        # Rejecting the whole move at a boundary makes many consecutive
-        # actions produce exactly the same frame and gives the policy a flat transition.
-        # Clipping preserves the feasible component of the move.
-        self.position[0] = np.clip(new_x, 0.0, area_size[0])
-        self.position[1] = np.clip(new_y, 0.0, area_size[1])
+        Returning the clipped component lets the environment penalize commands
+        that repeatedly push into a map boundary.
+        """
+        requested = np.array([delta_x, delta_y], dtype=np.float32)
+        old_xy = self.position[:2].copy()
+        new_xy = old_xy + requested
+        clipped_xy = np.clip(new_xy, [0.0, 0.0], area_size)
+        self.position[:2] = clipped_xy
+        return float(np.linalg.norm(new_xy - clipped_xy))
 
 
 class UE:
@@ -57,14 +57,16 @@ class UE:
         self,
         cpu_cycles_range: tuple[int, int] = (100, 200),  # CPU cycles per bit
         data_size_range: tuple[int, int] = (1, 5),  # Mbits
+        rng: np.random.Generator | None = None,
     ):
         """
         UE generates a random task,
         with cpu cycles per bit and data size range
         """
+        rng = rng if rng is not None else np.random.default_rng()
         self.task = (
-            float(np.random.randint(cpu_cycles_range[0], cpu_cycles_range[1] + 1)),
-            float(np.random.randint(data_size_range[0], data_size_range[1] + 1)),
+            float(rng.integers(cpu_cycles_range[0], cpu_cycles_range[1] + 1)),
+            float(rng.integers(data_size_range[0], data_size_range[1] + 1)),
         )
 
 

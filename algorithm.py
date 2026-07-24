@@ -1,10 +1,21 @@
-import gymnasium
 import numpy as np
 import torch
-from agents import Agent
-from memory_replay import MultiAgentBuffer
-from utils import Utils
 
+from agents import Agent, SharedCritic
+from memory_replay import MultiAgentBuffer
+
+
+class Utils:
+    def __init__(self, dtype=torch.float32, device=torch.device("cpu")):
+        self.dtype = dtype
+        self.device = device
+
+    @staticmethod
+    def tensor_to_np(tensor: torch.Tensor):
+        return tensor.detach().cpu().numpy()
+
+    def np_to_tensor(self, np_array: np.ndarray):
+        return torch.as_tensor(np_array, dtype=self.dtype, device=self.device)
 
 class Algorithm:
     def __init__(
@@ -27,22 +38,41 @@ class Algorithm:
         exploration_noise: float = 0.1,
         # MATD3
         target_policy_noise: float = 0.2,
+        target_noise_bound: float = 0.5,
         policy_delay_step: int = 2,  # update actor and target networks every n steps
         # memory replay parameters
         buffer_size: int = 1000000,
         batch_size: int = 100,
         # device
         device: torch.device = torch.device("cpu"),
-        utils: Utils | None = None,
+        dtype: torch.dtype = torch.float32,
     ):
-        self.utils = utils if utils is not None else Utils(device=device)
+        if algorithm not in ("MADDPG", "MATD3"):
+            raise ValueError('algorithm must be "MADDPG" or "MATD3"')
+
+        self.utils = Utils(dtype=dtype, device=device)
         self.agent_count = agent_count
         self.action_dim = action_dim
         self.device = device
         self.exploration_noise = exploration_noise
         # MATD3 only
         self.target_policy_noise = target_policy_noise if algorithm == "MATD3" else 0.0
+        self.target_noise_bound = target_noise_bound if algorithm == "MATD3" else None
         self.policy_delay_step = policy_delay_step if algorithm == "MATD3" else 1
+
+        # init shared critic
+        self.shared_critic = SharedCritic(
+            agent_count=agent_count,
+            state_dim=state_dim,
+            action_dim=action_dim,
+            critic_hidden_dim=critic_hidden_dim,
+            critic_hidden_layer_count=critic_hidden_layer_count,
+            critic_count=1 if algorithm == "MADDPG" else 2,
+            critic_lr=critic_lr,
+            gamma=gamma,
+            tau=tau,
+            device=device,
+        )
 
         # init agents
         self.agents = [
@@ -61,6 +91,7 @@ class Algorithm:
                 tau=tau,
                 device=device,
                 critic_count=1 if algorithm == "MADDPG" else 2,
+                shared_critic=self.shared_critic,
             )
             for id in range(agent_count)
         ]
@@ -78,22 +109,31 @@ class Algorithm:
         self.step = 0
         self.done = True
         self.state: np.ndarray = np.zeros(0)
+        self.evaluate_done = True
+        self.evaluate_state: np.ndarray = np.zeros(0)
 
     def explore(
         self,
-        env: gymnasium.Env,
+        env,
         render: bool = False,
         evaluate: bool = False,
     ):
-        if self.done:
-            self.state, _ = env.reset()
-            self.done = False
+        if evaluate:
+            if self.evaluate_done:
+                self.evaluate_state, _ = env.reset()
+                self.evaluate_done = False
+            current_state = self.evaluate_state
+        else:
+            if self.done:
+                self.state, _ = env.reset()
+                self.done = False
+            current_state = self.state
 
         noise_mu = 0.0 if evaluate else self.exploration_noise
 
         # calculate action
         # state_tensor shape: [agent_count, state_dim]
-        state_tensor = self.utils.np_to_tensor(self.state)
+        state_tensor = self.utils.np_to_tensor(current_state)
         # each action shape: [1, action_dim]
         actions = [
             agent.calculate_action(
@@ -108,19 +148,24 @@ class Algorithm:
 
         # take action
         next_state, reward, terminated, truncated, info = env.step(actions)
-        self.done = terminated or truncated
+        current_done = terminated or truncated
 
         # push transition to buffer
         if not evaluate:
-            self.buffer.push(self.state, actions, reward, next_state, self.done)
+            self.buffer.push(current_state, actions, reward, next_state, current_done)
 
         # update current state
-        self.state = next_state
+        if evaluate:
+            self.evaluate_state = next_state
+            self.evaluate_done = current_done
+        else:
+            self.state = next_state
+            self.done = current_done
 
         if render:
-            return reward, self.done, env.render()
+            return reward, current_done, env.render()
 
-        return reward, self.done, None
+        return reward, current_done, None
 
     def train(self):
         # if not enough samples in buffer, don't train
@@ -157,6 +202,7 @@ class Algorithm:
             agent.calculate_action(
                 raw_next_states[:, i, :],
                 noise_mu=self.target_policy_noise,
+                noise_clip=self.target_noise_bound,
                 use_target=True,
                 with_gradient=False,
             )
@@ -169,14 +215,14 @@ class Algorithm:
         # --- 2. Training process ---
 
         # 1. Train critic
-        for _, agent in enumerate(self.agents):
-            critic_loss = agent.calculate_critic_loss(
-                states, actions, rewards, next_states, next_actions, dones
-            )
-            agent.optimize_parameters(critic_loss, "critic")
+        critic_loss = self.shared_critic.calculate_critic_loss(
+            states, actions, rewards, next_states, next_actions, dones
+        )
+        self.shared_critic.optimize_parameters(critic_loss)
 
         if self.step % self.policy_delay_step == 0:
             # 2. Train actor
+            self.shared_critic.set_gradient_enabled(False)
             for id, agent in enumerate(self.agents):
                 # build a joint action list first
                 # the current agent's action is calculated with gradient,
@@ -207,15 +253,19 @@ class Algorithm:
                 ).mean()
 
                 agent.optimize_parameters(actor_loss, "actor")
+            self.shared_critic.set_gradient_enabled(True)
 
-        # update parameters (actor and critic) to target networks
-        for agent in self.agents:
-            agent.update_network_parameters()
+            # 3. Update target networks
+            for agent in self.agents:
+                agent.update_network_parameters()
+            self.shared_critic.update_network_parameters()
 
     def save_checkpoint(self, directory: str):
         for agent in self.agents:
             agent.save_models(directory)
+        self.shared_critic.save_models(directory)
 
     def load_checkpoint(self, directory: str):
         for agent in self.agents:
             agent.load_models(directory)
+        self.shared_critic.load_models(directory)
