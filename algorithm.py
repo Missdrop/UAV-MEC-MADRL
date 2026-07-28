@@ -56,6 +56,7 @@ class Algorithm:
         parameter_noise: float = 0.1,
         use_layer_norm: bool = True,
         dropout_rate: float = 0.2,
+        seed: int | None = None,
     ):
 
         self.utils = Utils(dtype=dtype, device=device)
@@ -120,6 +121,7 @@ class Algorithm:
             agent_count=agent_count,
             state_dim=observation_dim,
             action_dim=action_dim,
+            seed=seed,
         )
         self.batch_size = batch_size
 
@@ -277,6 +279,10 @@ class Algorithm:
             # 3. Update shadow networks
             for agent in self.agents:
                 agent.update()
+                # if using shared critics
+                if self.shared_critics:
+                    for critic in self.shared_critics:
+                        critic.update(self.tau)
 
         return {
             "critic_loss": critic_losses,

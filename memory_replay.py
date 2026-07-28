@@ -8,6 +8,7 @@ class MultiAgentBuffer:
         agent_count: int,
         state_dim: int,
         action_dim: int,
+        seed: int | None = None,
     ):
         self.capacity = capacity
 
@@ -21,6 +22,8 @@ class MultiAgentBuffer:
         self.index = 0
         self.size = 0
 
+        self.generator = np.random.default_rng(seed) if seed else None
+
     def push(self, state, action, reward, next_state, done):
         self.states[self.index] = state
         self.actions[self.index] = action
@@ -32,7 +35,10 @@ class MultiAgentBuffer:
         self.size = min(self.size + 1, self.capacity)
 
     def sample(self, batch_size: int):
-        indices = np.random.randint(0, self.size, size=batch_size)
+        if self.generator:
+            indices = self.generator.integers(0, self.size, size=batch_size)
+        else:
+            indices = np.random.randint(0, self.size, size=batch_size)
 
         states = self.states[indices]
         actions = self.actions[indices]

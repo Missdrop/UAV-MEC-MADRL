@@ -101,8 +101,11 @@ class Agent:
         q_values = self.criticise(
             states, joint_actions, use_target=False, with_gradient=True
         )
-        q_values = torch.stack([q_value.mean() for q_value in q_values])
-        return -q_values.mean()
+
+        # q_values = torch.stack([q_value.mean() for q_value in q_values])
+        # return -q_values.mean()
+
+        return -q_values[0].mean()
 
     def criticise(
         self,
