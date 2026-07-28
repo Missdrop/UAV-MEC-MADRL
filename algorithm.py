@@ -26,8 +26,6 @@ class Algorithm:
         self,
         # device
         device: torch.device,
-        # algorithm
-        algorithm: str,  # "MADDPG" or "MATD3"
         # agent parameters
         agent_count: int,
         observation_dim: int,
@@ -40,13 +38,14 @@ class Algorithm:
         actor_lr_decay: float = 0.9999,
         critic_lr: float = 1e-3,
         critic_lr_decay: float = 0.9999,
+        critic_count: int = 2,
         gamma: float = 0.99,  # discount factor
         tau: float = 1e-4,  # soft update factor
         # MADDPG & MATD3
         action_noise: float = 0.1,
         # MATD3
         target_policy_noise: float = 0.2,
-        target_noise_bound: float = 0.5,
+        target_noise_bound: float | None = 0.5,
         policy_delay_step: int = 2,  # update actor and target networks every n steps
         # memory replay parameters
         buffer_size: int = 1000000,
@@ -55,11 +54,9 @@ class Algorithm:
         # optional
         use_shared_critics: bool = True,
         parameter_noise: float = 0.1,
-        use_layer_norm: bool = False,
+        use_layer_norm: bool = True,
         dropout_rate: float = 0.2,
     ):
-        if algorithm not in ("MADDPG", "MATD3"):
-            raise ValueError("undefined algorithm")
 
         self.utils = Utils(dtype=dtype, device=device)
         self.agent_count = agent_count
@@ -68,9 +65,9 @@ class Algorithm:
         self.gamma = gamma
         self.tau = tau
         # MATD3 only
-        self.target_policy_noise = target_policy_noise if algorithm == "MATD3" else 0.0
-        self.target_noise_bound = target_noise_bound if algorithm == "MATD3" else None
-        self.policy_delay_step = policy_delay_step if algorithm == "MATD3" else 1
+        self.target_policy_noise = target_policy_noise
+        self.target_noise_bound = target_noise_bound
+        self.policy_delay_step = policy_delay_step
         # exploratory actor
         self.parameter_noise = parameter_noise
 
@@ -87,7 +84,7 @@ class Algorithm:
                     layer_norm=use_layer_norm,
                     device=device,
                 )
-                for _ in range(1 if algorithm == "MADDPG" else 2)
+                for _ in range(critic_count)
             ]
             if use_shared_critics
             else None
@@ -104,7 +101,7 @@ class Algorithm:
                 actor_hidden_layer_count=actor_hidden_layer_count,
                 critic_hidden_dim=critic_hidden_dim,
                 critic_hidden_layer_count=critic_hidden_layer_count,
-                critic_count=1 if algorithm == "MADDPG" else 2,
+                critic_count=critic_count,
                 actor_lr=actor_lr,
                 actor_lr_decay=actor_lr_decay,
                 critic_lr=critic_lr,
@@ -282,7 +279,7 @@ class Algorithm:
                 agent.update()
 
         return {
-            "critic_loss": critic_loss,
+            "critic_loss": critic_losses,
             "actor_loss": actor_losses,
         }
 
