@@ -33,6 +33,9 @@ class Agent:
         # optional
         layer_norm: bool = False,
         dropout_rate: float = 0.0,
+        # attention
+        head_count: int = 0,
+        encoder_layer_count: int = 0,
     ):
         self.gamma = gamma
         self.tau = tau
@@ -68,6 +71,8 @@ class Agent:
                     learning_rate_decay=critic_lr_decay,
                     layer_norm=layer_norm,
                     dropout_rate=dropout_rate,
+                    head_count=head_count,
+                    encoder_layer_count=encoder_layer_count,
                     device=device,
                 )
                 for _ in range(critic_count)
@@ -76,26 +81,6 @@ class Agent:
 
         # directly use actor's method
         self.act = self.actor.forward
-
-    # def act(
-    #     self,
-    #     observation: torch.Tensor,
-    #     use_target: bool = False,
-    #     explore: bool = False,  # use exploratory actor
-    #     action_noise: float = 0.0,
-    #     action_noise_limit: float | None = None,
-    #     param_noise: float = 0.0,  # parameter noise for exploratory actor
-    #     with_gradient: bool = False,
-    # ) -> torch.Tensor:
-    #     return self.actor.forward(
-    #         observation,
-    #         use_target=use_target,
-    #         explore=explore,
-    #         action_noise=action_noise,
-    #         action_noise_limit=action_noise_limit,
-    #         param_noise=param_noise,
-    #         with_gradient=with_gradient
-    #     )
 
     def action_loss(self, states, joint_actions) -> torch.Tensor:
         q_values = self.criticise(

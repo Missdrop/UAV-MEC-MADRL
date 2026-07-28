@@ -56,6 +56,8 @@ class Algorithm:
         parameter_noise: float = 0.1,
         use_layer_norm: bool = True,
         dropout_rate: float = 0.2,
+        head_count: int = 0,
+        encoder_layer_count: int = 0,
         seed: int | None = None,
     ):
 
@@ -72,17 +74,23 @@ class Algorithm:
         # exploratory actor
         self.parameter_noise = parameter_noise
 
+        critic_input_dim = observation_dim + action_dim
+        if encoder_layer_count <= 0:
+            critic_input_dim *= agent_count
+
         # init shared critic
         self.shared_critics = (
             [
                 Critic(
-                    input_dim=agent_count * (observation_dim + action_dim),
+                    input_dim=critic_input_dim,
                     hidden_dim=critic_hidden_dim,
                     hidden_layer_count=critic_hidden_layer_count,
                     learning_rate=critic_lr,
                     learning_rate_decay=critic_lr_decay,
                     dropout_rate=dropout_rate,
                     layer_norm=use_layer_norm,
+                    head_count=head_count,
+                    encoder_layer_count=encoder_layer_count,
                     device=device,
                 )
                 for _ in range(critic_count)
@@ -95,7 +103,7 @@ class Algorithm:
         self.agents = [
             Agent(
                 id=id,
-                critic_input_dim=agent_count * (observation_dim + action_dim),
+                critic_input_dim=critic_input_dim,
                 state_dim=observation_dim,
                 action_dim=action_dim,
                 actor_hidden_dim=actor_hidden_dim,
@@ -109,6 +117,10 @@ class Algorithm:
                 critic_lr_decay=critic_lr_decay,
                 gamma=gamma,
                 tau=tau,
+                dropout_rate=dropout_rate,
+                layer_norm=use_layer_norm,
+                head_count=head_count,
+                encoder_layer_count=encoder_layer_count,
                 device=device,
                 shared_critics=self.shared_critics,
             )
@@ -201,28 +213,20 @@ class Algorithm:
 
         # raw_states, raw_actions, raw_next_states shape: [batch_size, n_agents, other_dim]
         # reward, dones shape: [batch_size, 1]
-        raw_states, raw_actions, rewards, raw_next_states, dones = self.buffer.sample(
-            self.batch_size
-        )
+        states, actions, rewards, next_states, dones = self.buffer.sample(self.batch_size)
 
         # convert into tensors
-        raw_states = self.utils.np_to_tensor(raw_states)
-        raw_actions = self.utils.np_to_tensor(raw_actions)
+        states = self.utils.np_to_tensor(states)
+        actions = self.utils.np_to_tensor(actions)
         rewards = self.utils.np_to_tensor(rewards)
-        raw_next_states = self.utils.np_to_tensor(raw_next_states)
+        next_states = self.utils.np_to_tensor(next_states)
         dones = self.utils.np_to_tensor(dones)
 
-        # flatten the tensors
-        # shape: [batch_size, other_dim]
-        states = raw_states.view(self.batch_size, -1)
-        next_states = raw_next_states.view(self.batch_size, -1)
-        actions = raw_actions.view(self.batch_size, -1)
-
         # calculate next actions
-        # shape: [agent_count, batch_size, action_dim]
-        next_actions = [
+        # shape: [agent_count, [batch_size, action_dim]]
+        next_actions_list = [
             agent.act(
-                raw_next_states[:, i, :],
+                next_states[:, i, :],
                 action_noise=self.target_policy_noise,
                 action_noise_limit=self.target_noise_bound,
                 use_target=True,
@@ -230,9 +234,8 @@ class Algorithm:
             )
             for i, agent in enumerate(self.agents)
         ]
-        # concat by action dimension
-        # shape: [batch_size, agent_count * action_dim]
-        next_actions = torch.cat(next_actions, dim=1)
+        # -> [batch_size, n_agents, action_dim]
+        next_actions = torch.stack(next_actions_list, dim=1)
 
         # --- 2. Training process ---
 
@@ -263,13 +266,13 @@ class Algorithm:
                 for chosen_id, chosen_agent in enumerate(self.agents):
                     joint_actions_list.append(
                         chosen_agent.act(
-                            raw_states[:, chosen_id, :],
+                            states[:, chosen_id, :],
                             with_gradient=id == chosen_id,
                         )
                     )
 
-                # shape: [batch_size, agent_count * action_dim]
-                joint_actions = torch.cat(joint_actions_list, dim=1)
+                # shape: [batch, agent_count, action_dim]
+                joint_actions = torch.stack(joint_actions_list, dim=1)
 
                 # actor loss = -Q
                 actor_loss = self.agents[id].step_actor(states, joint_actions)
@@ -279,10 +282,11 @@ class Algorithm:
             # 3. Update shadow networks
             for agent in self.agents:
                 agent.update()
-                # if using shared critics
-                if self.shared_critics:
-                    for critic in self.shared_critics:
-                        critic.update(self.tau)
+
+            # if using shared critics
+            if self.shared_critics:
+                for critic in self.shared_critics:
+                    critic.update(self.tau)
 
         return {
             "critic_loss": critic_losses,

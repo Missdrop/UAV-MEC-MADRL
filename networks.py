@@ -67,13 +67,35 @@ class CriticNetwork(nn.Module):
         hidden_layer_count,
         layer_norm=False,
         dropout_rate=0.0,
+        # attention
+        head_count: int = 0,
+        encoder_layer_count: int = 0,
     ):
         super().__init__()
+        # attention switch
+        self.attention = encoder_layer_count > 0
+
         self.input = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim) if layer_norm else nn.Identity(),
             nn.ReLU(),
         )
+        if self.attention:
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=hidden_dim,
+                nhead=head_count,
+                dim_feedforward=hidden_dim,
+                dropout=dropout_rate,
+                batch_first=True,
+            )
+            self.encoder = nn.TransformerEncoder(
+                encoder_layer, num_layers=encoder_layer_count
+            )
+            self.pool = nn.Linear(hidden_dim, 1)
+        else:
+            self.encoder = nn.Identity()
+            self.pool = nn.Identity()
+
         self.hidden_layers = nn.Sequential(
             *[
                 HiddenLayer(hidden_dim, layer_norm, dropout_rate)
@@ -83,8 +105,20 @@ class CriticNetwork(nn.Module):
         self.output = nn.Linear(hidden_dim, 1)
 
     def forward(self, state, action):
-        x = torch.cat([state, action], dim=1)
-        x = self.input(x)
+        # -> [batch_size, agent_count, state_dim + action_dim]
+        x = torch.cat([state, action], dim=-1)
+        # if using attention
+        if self.attention:
+            x = self.input(x)
+            x = self.encoder(x)
+
+            # use softmax to normalize weights
+            weights = torch.softmax(self.pool(x), dim=1)
+            x = torch.sum(x * weights, dim=1)
+        else:
+            x = x.view(state.size(0), -1)
+            x = self.input(x)
+
         x = self.hidden_layers(x)
         return self.output(x)
 
@@ -260,6 +294,9 @@ class Critic:
         learning_rate_decay: float = 0.9999,
         layer_norm: bool = False,
         dropout_rate: float = 0.0,
+        # attention
+        head_count: int = 0,
+        encoder_layer_count: int = 0,
     ):
         self.device = device
 
@@ -270,6 +307,8 @@ class Critic:
             hidden_layer_count,
             layer_norm=layer_norm,
             dropout_rate=dropout_rate,
+            head_count=head_count,
+            encoder_layer_count=encoder_layer_count,
         )
         self.target_critic = CriticNetwork(
             input_dim,
@@ -277,6 +316,8 @@ class Critic:
             hidden_layer_count,
             layer_norm=layer_norm,
             dropout_rate=dropout_rate,
+            head_count=head_count,
+            encoder_layer_count=encoder_layer_count,
         )
 
         # move networks to device
