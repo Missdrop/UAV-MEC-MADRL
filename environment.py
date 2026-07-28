@@ -1,5 +1,4 @@
 import math
-from typing import ClassVar
 
 import gymnasium as gym
 import matplotlib.pyplot as plt
@@ -23,7 +22,7 @@ class Environment(gym.Env):
     and the UAVs can only move in the x-y plane.
     """
 
-    metadata: ClassVar[dict] = {
+    metadata = {
         "render_modes": ["human", "rgb_array"],
         "render_fps": 30,
     }
@@ -170,8 +169,8 @@ class Environment(gym.Env):
             # [Case 2]
             positions = [
                 (
-                    float(self.np_random.uniform(0, self.area_size[0])),
-                    float(self.np_random.uniform(0, self.area_size[1])),
+                    self.np_random.uniform(0, self.area_size[0]),
+                    self.np_random.uniform(0, self.area_size[1]),
                     uav_altitude,  # UAV has a fixed altitude
                 )
                 for _ in range(num_uavs)
@@ -204,15 +203,11 @@ class Environment(gym.Env):
         # generate cluster centers, ensure inside the boundary
         centers = [
             (
-                float(
-                    self.np_random.uniform(
-                        cluster_radius, self.area_size[0] - cluster_radius
-                    )
+                self.np_random.uniform(
+                    cluster_radius, self.area_size[0] - cluster_radius
                 ),
-                float(
-                    self.np_random.uniform(
-                        cluster_radius, self.area_size[1] - cluster_radius
-                    )
+                self.np_random.uniform(
+                    cluster_radius, self.area_size[1] - cluster_radius
                 ),
             )
             for _ in range(cluster_count)
@@ -254,8 +249,8 @@ class Environment(gym.Env):
         else:
             positions = [
                 (
-                    float(self.np_random.uniform(0, self.area_size[0])),
-                    float(self.np_random.uniform(0, self.area_size[1])),
+                    self.np_random.uniform(0, self.area_size[0]),
+                    self.np_random.uniform(0, self.area_size[1]),
                     0.0,  # UE height is always 0m (ground level)
                 )
                 for _ in range(num_ues)
@@ -278,8 +273,8 @@ class Environment(gym.Env):
         else:
             positions = [
                 (
-                    float(self.np_random.uniform(0, self.area_size[0])),
-                    float(self.np_random.uniform(0, self.area_size[1])),
+                    self.np_random.uniform(0, self.area_size[0]),
+                    self.np_random.uniform(0, self.area_size[1]),
                     fog_altitude,  # Fog node has a fixed altitude
                 )
                 for _ in range(num_fogs)
@@ -679,4 +674,3 @@ class Environment(gym.Env):
             plt.close(self.fig)
             self.fig = None
             self.ax = None
-
