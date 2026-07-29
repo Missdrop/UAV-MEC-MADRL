@@ -8,7 +8,7 @@ from gymnasium.utils import seeding
 from matplotlib import patches
 from matplotlib.figure import Figure
 
-from entities import UAV, UE, FogNode
+from entities import UAV, UE, EdgeNode
 
 
 class Environment(gym.Env):
@@ -16,7 +16,7 @@ class Environment(gym.Env):
     This is a multi-agent environment on UAV offloading task, which contains:
         - multiple UE clusters
         - multiple UAVs
-        - multiple fog devices
+        - multiple edge devices
     Custom positions can be provided.
     But in this implemention, they are all in a fixed altitude (z-axis),
     and the UAVs can only move in the x-y plane.
@@ -65,11 +65,11 @@ class Environment(gym.Env):
         # UE cluster parameters
         cluster_count: int = 2,
         cluster_radius: float = 50.0,  # meters
-        # Fog parameters
-        fog_count: int = 2,
-        fog_custom_position: list[tuple[float, float, float]] | None = None,
-        fog_cpu_speed: float = 10.0,  # GHz
-        fog_altitude: float = 100.0,  # meters
+        # Edge parameters
+        edge_count: int = 2,
+        edge_custom_position: list[tuple[float, float, float]] | None = None,
+        edge_cpu_speed: float = 10.0,  # GHz
+        edge_altitude: float = 100.0,  # meters
     ):
         super().__init__()
         if random_seed is not None:
@@ -100,7 +100,7 @@ class Environment(gym.Env):
         self.cpu_cycles_range = cpu_cycles_range
         self.data_size_range = data_size_range
 
-        # Initialize UAVs, UEs, and Fog nodes
+        # Initialize UAVs, UEs, and Edge nodes
         self.uavs = self._init_uavs(
             uav_count,
             uav_transmit_power,
@@ -113,8 +113,8 @@ class Environment(gym.Env):
         self.ues = self._init_ues(
             ue_count, ue_transmit_power, ue_custom_position, cluster_count, cluster_radius
         )
-        self.fogs = self._init_fogs(
-            fog_count, fog_cpu_speed, fog_altitude, fog_custom_position
+        self.edges = self._init_edges(
+            edge_count, edge_cpu_speed, edge_altitude, edge_custom_position
         )
 
         # record UAV initial positions for reset()
@@ -132,9 +132,9 @@ class Environment(gym.Env):
         # Per-agent normalized observation:
         # self xyz + other-UAV relative xyz +
         # each UE(relative xyz, task cycles, task size, connected-to-self, unconnected) +
-        # each Fog relative xyz.
+        # each edge relative xyz.
         self.obs_dim = (
-            3 + 3 * (len(self.uavs) - 1) + 7 * len(self.ues) + 3 * len(self.fogs)
+            3 + 3 * (len(self.uavs) - 1) + 7 * len(self.ues) + 3 * len(self.edges)
         )
         self.observation_space = spaces.Box(
             low=-1.0,
@@ -144,7 +144,7 @@ class Environment(gym.Env):
         )
 
     """
-        Inner methods for initializing UAVs, UEs, and Fog nodes.
+        Inner methods for initializing UAVs, UEs, and edge nodes.
     """
 
     def _init_uavs(
@@ -260,14 +260,14 @@ class Environment(gym.Env):
             ues.append(UE(id, pos, ue_transmit_power))
         return ues
 
-    def _init_fogs(
+    def _init_edges(
         self,
-        num_fogs: int,
-        fog_cpu_speed: float,
-        fog_altitude: float,
+        num_edges: int,
+        edge_cpu_speed: float,
+        edge_altitude: float,
         custom_positions: list[tuple[float, float, float]] | None = None,
-    ) -> list[FogNode]:
-        fogs = []
+    ) -> list[EdgeNode]:
+        edges = []
         if custom_positions is not None:
             positions = custom_positions
         else:
@@ -275,14 +275,14 @@ class Environment(gym.Env):
                 (
                     self.np_random.uniform(0, self.area_size[0]),
                     self.np_random.uniform(0, self.area_size[1]),
-                    fog_altitude,  # Fog node has a fixed altitude
+                    edge_altitude,  # edge node has a fixed altitude
                 )
-                for _ in range(num_fogs)
+                for _ in range(num_edges)
             ]
 
         for id, pos in enumerate(positions):
-            fogs.append(FogNode(id, pos, fog_cpu_speed))
-        return fogs
+            edges.append(EdgeNode(id, pos, edge_cpu_speed))
+        return edges
 
     """
         Helping inner methods
@@ -377,8 +377,8 @@ class Environment(gym.Env):
                         1.0 if ue.connected_uav_id == -1 else 0.0,
                     ]
                 )
-            for fog in self.fogs:
-                features.extend(((fog.position - agent.position) / xy_scale).tolist())
+            for edge in self.edges:
+                features.extend(((edge.position - agent.position) / xy_scale).tolist())
             observations.append(features)
         return np.clip(np.asarray(observations, dtype=np.float32), -1.0, 1.0)
 
@@ -402,12 +402,12 @@ class Environment(gym.Env):
                 continue
             uav = self.uavs[ue.connected_uav_id]
             x = float(actions[uav.id, 2 + j] / 2.0 + 0.5)
-            assigned_fog = min(
-                self.fogs, key=lambda fog: self._distance(uav.position, fog.position)
+            assigned_edge = min(
+                self.edges, key=lambda edge: self._distance(uav.position, edge.position)
             )
-            dist_uav_fog = self._distance(uav.position, assigned_fog.position)
-            rate_uav_fog = self._data_rate(
-                self._channel_gain(dist_uav_fog), uav.transmit_power
+            dist_uav_edge = self._distance(uav.position, assigned_edge.position)
+            rate_uav_edge = self._data_rate(
+                self._channel_gain(dist_uav_edge), uav.transmit_power
             )
             cpu_cycles_per_bit, data_size_mb = ue.task
             dist_ue_uav = self._distance(ue.position, uav.position)
@@ -420,22 +420,22 @@ class Environment(gym.Env):
                 x * cpu_cycles_per_bit * data_size_mb / uav.CPU_speed * 1e-3
             )
             energy_uav_compute = uav.CPU_power * time_uav_compute
-            time_fog_transfer = (1.0 - x) * data_size_mb / rate_uav_fog
-            energy_fog_transfer = uav.transmit_power * time_fog_transfer
-            time_fog_compute = (
+            time_edge_transfer = (1.0 - x) * data_size_mb / rate_uav_edge
+            energy_edge_transfer = uav.transmit_power * time_edge_transfer
+            time_edge_compute = (
                 (1.0 - x)
                 * cpu_cycles_per_bit
                 * data_size_mb
-                / assigned_fog.CPU_speed
+                / assigned_edge.CPU_speed
                 * 1e-3
             )
             bottleneck_throughput = min(
                 bottleneck_throughput,
-                rate_ue_uav if x >= 1.0 - 1e-6 else min(rate_ue_uav, rate_uav_fog),
+                rate_ue_uav if x >= 1.0 - 1e-6 else min(rate_ue_uav, rate_uav_edge),
             )
-            total_energy += energy_upload + energy_uav_compute + energy_fog_transfer
+            total_energy += energy_upload + energy_uav_compute + energy_edge_transfer
             total_time += (
-                time_upload + time_uav_compute + time_fog_transfer + time_fog_compute
+                time_upload + time_uav_compute + time_edge_transfer + time_edge_compute
             )
 
         # No connected UE has no meaningful bottleneck throughput. Disconnection
@@ -556,11 +556,11 @@ class Environment(gym.Env):
         self.ax.set_ylabel("Y (m)")
         self.ax.grid(True, linestyle="--", alpha=0.5)
 
-        # render Fog nodes
-        fog_x = [fog.position[0] for fog in self.fogs]
-        fog_y = [fog.position[1] for fog in self.fogs]
+        # render edge nodes
+        edge_x = [edge.position[0] for edge in self.edges]
+        edge_y = [edge.position[1] for edge in self.edges]
         self.ax.scatter(
-            fog_x, fog_y, marker="s", s=100, c="black", label="Fog Node", zorder=5
+            edge_x, edge_y, marker="s", s=100, c="black", label="Edge Node", zorder=5
         )
 
         # render UEs (connected and unconnected) with different markers
@@ -630,13 +630,13 @@ class Environment(gym.Env):
                         zorder=2,
                     )
 
-            # render UAV -> Fog
-            assigned_fog = min(
-                self.fogs, key=lambda f: self._distance(uav.position, f.position)
+            # render UAV -> edge
+            assigned_edge = min(
+                self.edges, key=lambda f: self._distance(uav.position, f.position)
             )
             self.ax.plot(
-                [uav.position[0], assigned_fog.position[0]],
-                [uav.position[1], assigned_fog.position[1]],
+                [uav.position[0], assigned_edge.position[0]],
+                [uav.position[1], assigned_edge.position[1]],
                 color="gray",
                 linestyle="--",
                 linewidth=1.2,

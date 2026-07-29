@@ -69,7 +69,7 @@ class UE:
         )
 
 
-class FogNode:
+class EdgeNode:
     def __init__(
         self,
         id: int,
