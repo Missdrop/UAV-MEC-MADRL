@@ -1,4 +1,6 @@
+import json
 import math
+import os
 
 import gymnasium as gym
 import matplotlib.pyplot as plt
@@ -22,8 +24,8 @@ class Environment(gym.Env):
     and the UAVs can only move in the x-y plane.
     """
 
-    metadata = {
-        "render_modes": ["human", "rgb_array"],
+    metadata = {  # noqa: RUF012
+        "render_modes": ["human", "rgb_array", "trace"],
         "render_fps": 30,
     }
 
@@ -64,6 +66,7 @@ class Environment(gym.Env):
         data_size_range: tuple[int, int] = (1, 5),  # Mbits
         # UE cluster parameters
         cluster_count: int = 2,
+        cluster_custom_center: list[tuple[float, float]] | None = None,
         cluster_radius: float = 50.0,  # meters
         # Edge parameters
         edge_count: int = 2,
@@ -71,6 +74,12 @@ class Environment(gym.Env):
         edge_cpu_speed: float = 10.0,  # GHz
         edge_altitude: float = 100.0,  # meters
     ):
+        # record parameters
+        init_config = locals().copy()
+        init_config.pop("self")
+        init_config.pop("__class__", None)
+        self.config = init_config
+
         super().__init__()
         if random_seed is not None:
             self._np_random, self._np_random_seed = seeding.np_random(random_seed)
@@ -79,6 +88,8 @@ class Environment(gym.Env):
         self.figsize = figsize
         self.fig = None
         self.ax = None
+        self.action_history: list[np.ndarray] = []
+        self.uav_position_history: list[np.ndarray] = []
 
         self._is_closed = False
         self.max_steps = max_steps
@@ -111,7 +122,12 @@ class Environment(gym.Env):
             uav_custom_position,
         )
         self.ues = self._init_ues(
-            ue_count, ue_transmit_power, ue_custom_position, cluster_count, cluster_radius
+            ue_count,
+            ue_transmit_power,
+            ue_custom_position,
+            cluster_count,
+            cluster_radius,
+            cluster_custom_center,
         )
         self.edges = self._init_edges(
             edge_count, edge_cpu_speed, edge_altitude, edge_custom_position
@@ -194,6 +210,7 @@ class Environment(gym.Env):
         num_ues: int,
         cluster_count: int,
         cluster_radius: float,
+        cluster_custom_center: list[tuple[float, float]] | None = None,
     ) -> list[tuple[float, float, float]]:
         """
         generate UE clusters with a given number of clusters and cluster radius
@@ -201,17 +218,21 @@ class Environment(gym.Env):
         positions = []
 
         # generate cluster centers, ensure inside the boundary
-        centers = [
-            (
-                self.np_random.uniform(
-                    cluster_radius, self.area_size[0] - cluster_radius
-                ),
-                self.np_random.uniform(
-                    cluster_radius, self.area_size[1] - cluster_radius
-                ),
-            )
-            for _ in range(cluster_count)
-        ]
+        centers = (
+            cluster_custom_center
+            if cluster_custom_center
+            else [
+                (
+                    self.np_random.uniform(
+                        cluster_radius, self.area_size[0] - cluster_radius
+                    ),
+                    self.np_random.uniform(
+                        cluster_radius, self.area_size[1] - cluster_radius
+                    ),
+                )
+                for _ in range(cluster_count)
+            ]
+        )
 
         # distribute UEs to clusters
         ues_per_cluster = num_ues // cluster_count
@@ -240,12 +261,15 @@ class Environment(gym.Env):
         custom_positions: list[tuple[float, float, float]] | None = None,
         cluster_count: int = 0,
         cluster_radius: float = 0.0,
+        cluster_custom_center: list[tuple[float, float]] | None = None,
     ) -> list[UE]:
         ues = []
         if custom_positions is not None:
             positions = custom_positions
         elif cluster_count > 0 and cluster_radius > 0.0:
-            positions = self._generate_ue_clusters(num_ues, cluster_count, cluster_radius)
+            positions = self._generate_ue_clusters(
+                num_ues, cluster_count, cluster_radius, cluster_custom_center
+            )
         else:
             positions = [
                 (
@@ -456,13 +480,18 @@ class Environment(gym.Env):
         # reset step counter
         self.steps = 0
 
-        # reset rendermode
+        # reset render mode
         if options is not None:
             self.render_mode = options.get("render_mode", self.render_mode)
 
         # reset positions
         for idx, uav in enumerate(self.uavs):
             uav.position = self.initial_uav_positions[idx].copy()
+
+        self.action_history.clear()
+        self.uav_position_history = [
+            np.asarray([uav.position.copy() for uav in self.uavs])
+        ]
 
         # reset tasks for UEs
         for ue in self.ues:
@@ -494,6 +523,12 @@ class Environment(gym.Env):
             delta = direction * self.max_move_distance
             boundary_violation += uav.move(
                 float(delta[0]), float(delta[1]), self.area_size
+            )
+
+        if self.render_mode == "trace":
+            self.action_history.append(np.asarray(action).copy())
+            self.uav_position_history.append(
+                np.asarray([uav.position.copy() for uav in self.uavs])
             )
 
         # update connections between UEs and UAVs
@@ -597,6 +632,27 @@ class Environment(gym.Env):
         for idx, uav in enumerate(self.uavs):
             color = uav_colors[idx % len(uav_colors)]
 
+            if self.render_mode == "trace" and self.uav_position_history:
+                trace = np.asarray(self.uav_position_history)[:, idx, :]
+                self.ax.plot(
+                    trace[:, 0],
+                    trace[:, 1],
+                    color=color,
+                    linewidth=2.2,
+                    alpha=0.85,
+                    zorder=5,
+                )
+                self.ax.scatter(
+                    trace[0, 0],
+                    trace[0, 1],
+                    marker="o",
+                    s=45,
+                    facecolors="white",
+                    edgecolors=color,
+                    linewidths=1.8,
+                    zorder=6,
+                )
+
             # render UAV
             self.ax.scatter(
                 uav.position[0],
@@ -658,7 +714,7 @@ class Environment(gym.Env):
         if self.render_mode == "human":
             plt.draw()
             return None
-        elif self.render_mode == "rgb_array":
+        elif self.render_mode in {"rgb_array", "trace"}:
             from matplotlib.backends.backend_agg import FigureCanvasAgg
 
             canvas = FigureCanvasAgg(self.fig)
@@ -674,3 +730,12 @@ class Environment(gym.Env):
             plt.close(self.fig)
             self.fig = None
             self.ax = None
+
+    def save_config(self, directory: str) -> None:
+        os.makedirs(directory, exist_ok=True)
+        with open(
+            os.path.join(directory, "environment.json"),
+            "w",
+            encoding="utf-8",
+        ) as config_file:
+            json.dump(self.config, config_file, indent=2)

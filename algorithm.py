@@ -1,3 +1,4 @@
+import json
 import os
 
 import numpy as np
@@ -35,9 +36,9 @@ class Algorithm:
         critic_hidden_dim: int = 64,
         critic_hidden_layer_count: int = 2,
         actor_lr: float = 1e-4,
-        actor_lr_decay: float = 0.9999,
+        actor_lr_decay: float = 0.99,
         critic_lr: float = 1e-3,
-        critic_lr_decay: float = 0.9999,
+        critic_lr_decay: float = 0.99,
         critic_count: int = 2,
         gamma: float = 0.99,  # discount factor
         tau: float = 1e-4,  # soft update factor
@@ -60,6 +61,14 @@ class Algorithm:
         encoder_layer_count: int = 0,
         seed: int | None = None,
     ):
+
+        # record parameters
+        init_config = locals().copy()
+        init_config.pop("self")
+        init_config.pop("__class__", None)
+        init_config["dtype"] = str(dtype).removeprefix("torch.")
+        init_config.pop("device")
+        self.config = init_config
 
         self.utils = Utils(dtype=dtype, device=device)
         self.agent_count = agent_count
@@ -302,6 +311,9 @@ class Algorithm:
             agent.train()
 
     def save(self, directory: str):
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, "config.json"), "w", encoding="utf-8") as f:
+            json.dump(self.config, f, indent=2)
         for id, agent in enumerate(self.agents):
             agent.save(os.path.join(directory, "agent" + str(id)))
         if self.shared_critics:
