@@ -11,6 +11,59 @@ import torch
 from algorithm import Algorithm
 from environment import Environment
 
+ALGORITHM_COLORS = {
+    "MADDPG": "#4361EE",
+    "MATD3": "#FF4D6D",
+    "DSPAC": "#06B6A9",
+    "DSPAC-Attn": "#9B5DE5",
+}
+FALLBACK_COLORS = px.colors.qualitative.Bold
+PAPER_COLOR = "#F4F7FC"
+PLOT_COLOR = "#FFFFFF"
+GRID_COLOR = "#DCE4F0"
+TEXT_COLOR = "#24324A"
+
+
+def algorithm_color(name: str, index: int) -> str:
+    return ALGORITHM_COLORS.get(name, FALLBACK_COLORS[index % len(FALLBACK_COLORS)])
+
+
+def apply_axes_style(fig) -> None:
+    fig.update_xaxes(
+        gridcolor=GRID_COLOR,
+        zeroline=False,
+        showline=True,
+        linecolor="#AAB7C9",
+        linewidth=1,
+        ticks="outside",
+        tickcolor="#AAB7C9",
+    )
+    fig.update_yaxes(
+        gridcolor=GRID_COLOR,
+        zeroline=False,
+        showline=True,
+        linecolor="#AAB7C9",
+        linewidth=1,
+        ticks="outside",
+        tickcolor="#AAB7C9",
+    )
+
+
+def apply_layout_style(fig) -> None:
+    fig.update_layout(
+        template="plotly_white",
+        paper_bgcolor=PAPER_COLOR,
+        plot_bgcolor=PLOT_COLOR,
+        font={"family": "Arial, Microsoft YaHei, sans-serif", "color": TEXT_COLOR},
+        title={"font": {"size": 24, "color": "#17233C"}, "x": 0.04},
+        hoverlabel={
+            "bgcolor": "white",
+            "bordercolor": "#CBD5E1",
+            "font": {"color": TEXT_COLOR, "size": 12},
+        },
+    )
+    apply_axes_style(fig)
+
 
 def save_figure(fig, figure_dir: str, stem: str, scale: float = 2.0) -> None:
     """Save an interactive figure and, when Kaleido is available, a PNG copy."""
@@ -28,17 +81,16 @@ def draw_training_curves(result_dir: str, figure_dir: str) -> None:
     df_smoothed = df[data_cols].rolling(window=100, min_periods=1).mean()
 
     fig = go.Figure()
-    colors = px.colors.qualitative.Plotly
     for i, col in enumerate(data_cols):
-        color = colors[i % len(colors)]
+        color = algorithm_color(col, i)
         fig.add_trace(
             go.Scatter(
                 x=df[x_col],
                 y=-df[col],
                 mode="lines",
                 name=f"{col} (Raw)",
-                line={"color": color, "width": 1},
-                opacity=0.25,
+                line={"color": color, "width": 0.8},
+                opacity=0.14,
                 legendgroup=col,
                 showlegend=False,
             )
@@ -48,9 +100,25 @@ def draw_training_curves(result_dir: str, figure_dir: str) -> None:
                 x=df[x_col],
                 y=-df_smoothed[col],
                 mode="lines",
-                name=col,
-                line={"color": color, "width": 2.5},
+                line={"color": color, "width": 8},
+                opacity=0.09,
                 legendgroup=col,
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df[x_col],
+                y=-df_smoothed[col],
+                mode="lines",
+                name=col,
+                line={"color": color, "width": 3},
+                legendgroup=col,
+                hovertemplate=(
+                    f"<b>{col}</b><br>Episode %{{x}}<br>"
+                    "Smoothed cost %{y:.3f}<extra></extra>"
+                ),
             )
         )
     fig.update_yaxes(
@@ -58,13 +126,21 @@ def draw_training_curves(result_dir: str, figure_dir: str) -> None:
     )
     fig.update_xaxes(title_text=x_col)
     fig.update_layout(
-        title="Training Trends",
-        template="plotly_white",
-        height=600,
-        width=950,
+        title="<b>Training Dynamics</b>",
+        height=620,
+        width=980,
         hovermode="x unified",
-        legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 1.02},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+            "bgcolor": "rgba(255,255,255,0.82)",
+        },
+        margin={"l": 85, "r": 35, "t": 120, "b": 70},
     )
+    apply_layout_style(fig)
     save_figure(fig, figure_dir, "line_graph")
 
     bins = [0, 200, 400, 600, 800, 1000]
@@ -84,18 +160,33 @@ def draw_training_curves(result_dir: str, figure_dir: str) -> None:
         x="stage",
         y="value",
         color="Algorithm",
+        color_discrete_map={
+            name: algorithm_color(name, i) for i, name in enumerate(data_cols)
+        },
         points="outliers",
-        title="Algorithm Performance Comparison",
+        title="<b>Performance Across Training Stages</b>",
         labels={"stage": "Episode Range", "value": "System cost (Log Scale)"},
     )
     fig.update_yaxes(type="log", autorange="reversed")
     fig.update_layout(
-        template="plotly_white",
         boxmode="group",
-        height=600,
-        width=950,
-        legend={"yanchor": "top", "y": 0.99, "xanchor": "left", "x": 1.02},
+        height=620,
+        width=980,
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        },
+        margin={"l": 85, "r": 35, "t": 120, "b": 70},
     )
+    fig.update_traces(
+        opacity=0.78,
+        line={"width": 1.6},
+        marker={"size": 4, "opacity": 0.55, "line": {"width": 0.4}},
+    )
+    apply_layout_style(fig)
     save_figure(fig, figure_dir, "box_plot")
 
     last_100 = df[(df[x_col] > 900) & (df[x_col] <= 1000)].copy()
@@ -108,13 +199,30 @@ def draw_training_curves(result_dir: str, figure_dir: str) -> None:
         x="Algorithm",
         y="value",
         color="Algorithm",
+        color_discrete_map={
+            name: algorithm_color(name, i) for i, name in enumerate(data_cols)
+        },
         box=True,
         points="all",
-        title="Final 100 Episodes Reward Distribution",
+        title="<b>Final-Stage Stability</b>",
         labels={"value": "System cost (Log Scale)"},
     )
     fig.update_yaxes(type="log", autorange="reversed")
-    fig.update_layout(template="plotly_white", height=600, width=900, showlegend=False)
+    fig.update_traces(
+        opacity=0.78,
+        meanline_visible=True,
+        line={"width": 1.8},
+        marker={"size": 4, "opacity": 0.42},
+        points="all",
+        jitter=0.2,
+    )
+    fig.update_layout(
+        height=620,
+        width=900,
+        showlegend=False,
+        margin={"l": 85, "r": 35, "t": 120, "b": 70},
+    )
+    apply_layout_style(fig)
     save_figure(fig, figure_dir, "violin_plot")
 
 
@@ -193,7 +301,12 @@ def draw_uav_trace_comparison(
             y=ue_positions[:, 1],
             mode="markers",
             name="UE",
-            marker={"size": 7, "color": "dodgerblue", "opacity": 0.8},
+            marker={
+                "size": 8,
+                "color": "#38A3FF",
+                "opacity": 0.88,
+                "line": {"color": "white", "width": 1},
+            },
             legend="legend2",
             hovertemplate="UE<br>x=%{x:.1f}<br>y=%{y:.1f}<extra></extra>",
         )
@@ -204,17 +317,21 @@ def draw_uav_trace_comparison(
             y=edge_positions[:, 1],
             mode="markers",
             name="Edge",
-            marker={"size": 12, "color": "black", "symbol": "square"},
+            marker={
+                "size": 13,
+                "color": "#17233C",
+                "symbol": "square",
+                "line": {"color": "white", "width": 1.2},
+            },
             legend="legend2",
             hovertemplate="Edge<br>x=%{x:.1f}<br>y=%{y:.1f}<extra></extra>",
         )
     )
 
-    colors = px.colors.qualitative.Plotly
     line_styles = ["solid", "dash", "dashdot", "dot"]
     for algorithm_id, name in enumerate(algorithm_names):
         trace = traces[name]
-        color = colors[algorithm_id % len(colors)]
+        color = algorithm_color(name, algorithm_id)
         for uav_id in range(trace.shape[1]):
             figure.add_trace(
                 go.Scatter(
@@ -225,7 +342,7 @@ def draw_uav_trace_comparison(
                     line={
                         "color": color,
                         "dash": line_styles[uav_id % len(line_styles)],
-                        "width": 1.4,
+                        "width": 1.65,
                     },
                     opacity=0.9,
                     showlegend=False,
@@ -261,7 +378,7 @@ def draw_uav_trace_comparison(
                 y=[None],
                 mode="lines",
                 name=name,
-                line={"color": colors[algorithm_id % len(colors)], "width": 3},
+                line={"color": algorithm_color(name, algorithm_id), "width": 4},
             )
         )
     uav_count = next(iter(traces.values())).shape[1]
@@ -291,16 +408,19 @@ def draw_uav_trace_comparison(
         scaleratio=1,
     )
     figure.update_layout(
-        template="plotly_white",
         width=512,
         height=512,
-        margin={"l": 70, "r": 45, "t": 85, "b": 60},
+        margin={"l": 65, "r": 35, "t": 75, "b": 55},
         legend={
             "orientation": "h",
             "x": 0.5,
             "xanchor": "center",
             "y": 1.08,
             "yanchor": "bottom",
+            "bgcolor": "rgba(255,255,255,0.88)",
+            "bordercolor": "#D7DFEA",
+            "borderwidth": 1,
+            "font": {"size": 10},
         },
         legend2={
             "x": 0.99,
@@ -308,11 +428,14 @@ def draw_uav_trace_comparison(
             "y": 0.99,
             "yanchor": "top",
             "bgcolor": "rgba(255,255,255,0.9)",
-            "bordercolor": "lightgray",
+            "bordercolor": "#D7DFEA",
             "borderwidth": 1,
             "font": {"size": 10},
         },
     )
+    apply_layout_style(figure)
+    figure.update_xaxes(mirror=True)
+    figure.update_yaxes(mirror=True)
     save_figure(figure, figure_dir, "uav_trace_comparison")
 
     for env in environments.values():
