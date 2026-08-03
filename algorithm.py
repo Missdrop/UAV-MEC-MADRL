@@ -49,7 +49,7 @@ class Algorithm:
         target_noise_bound: float | None = 0.5,
         policy_delay_step: int = 2,  # update actor and target networks every n steps
         # memory replay parameters
-        buffer_size: int = 1000000,
+        buffer_size: int = 100000,
         batch_size: int = 256,
         dtype: torch.dtype = torch.float32,
         # optional
