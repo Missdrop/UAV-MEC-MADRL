@@ -36,9 +36,9 @@ class Algorithm:
         critic_hidden_dim: int = 64,
         critic_hidden_layer_count: int = 2,
         actor_lr: float = 1e-4,
-        actor_lr_decay: float = 0.99,
+        actor_lr_decay: float = 0.9999,
         critic_lr: float = 1e-3,
-        critic_lr_decay: float = 0.99,
+        critic_lr_decay: float = 0.9999,
         critic_count: int = 2,
         gamma: float = 0.99,  # discount factor
         tau: float = 1e-4,  # soft update factor
