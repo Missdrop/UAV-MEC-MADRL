@@ -572,13 +572,13 @@ class Environment(gym.Env):
 
         return self.observation, reward, terminated, truncated, info
 
-    def render(self) -> np.ndarray | None:
+    def render(self, dpi: int = 150) -> np.ndarray | None:
         if self.render_mode is None:
             return None
 
         # initialize the figure and axes
         if self.fig is None or self.ax is None:
-            self.fig = Figure(figsize=self.figsize, dpi=150)
+            self.fig = Figure(figsize=self.figsize, dpi=dpi)
             self.ax = self.fig.add_subplot(1, 1, 1)
 
         # clear the previous frame

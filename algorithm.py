@@ -41,7 +41,7 @@ class Algorithm:
         critic_lr_decay: float = 0.9999,
         critic_count: int = 2,
         gamma: float = 0.99,  # discount factor
-        tau: float = 1e-4,  # soft update factor
+        tau: float = 5e-3,  # soft update factor
         # MADDPG & MATD3
         action_noise: float = 0.1,
         # MATD3
