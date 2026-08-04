@@ -87,6 +87,7 @@ class CriticNetwork(nn.Module):
                 dim_feedforward=hidden_dim,
                 dropout=dropout_rate,
                 batch_first=True,
+                norm_first=True,  # apply layer norm before attention and feedforward
             )
             self.encoder = nn.TransformerEncoder(
                 encoder_layer, num_layers=encoder_layer_count

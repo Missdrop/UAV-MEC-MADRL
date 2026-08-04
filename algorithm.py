@@ -158,7 +158,6 @@ class Algorithm:
         env,
         render: bool = False,
         evaluate: bool = False,
-        use_param_noise: bool = False,
     ):
         if evaluate:
             if self.evaluate_done:
@@ -176,7 +175,7 @@ class Algorithm:
         state_tensor = self.utils.np_to_tensor(state)
         # each action shape: [1, action_dim]
         action_noise = 0.0 if evaluate else self.action_noise
-        param_noise = 0.0 if evaluate or not use_param_noise else self.parameter_noise
+        param_noise = 0.0 if evaluate else self.parameter_noise
         actions = [
             agent.act(
                 state_tensor[i : i + 1],
