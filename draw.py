@@ -408,8 +408,8 @@ def draw_uav_trace_comparison(
         scaleratio=1,
     )
     figure.update_layout(
-        width=512,
-        height=512,
+        width=700,
+        height=700,
         margin={"l": 65, "r": 35, "t": 75, "b": 55},
         legend={
             "orientation": "h",
@@ -448,12 +448,15 @@ def main() -> None:
     parser.add_argument(
         "--device", default="cpu", help="PyTorch device, e.g. cpu or cuda"
     )
+    parser.add_argument("--type", default="all", help="Type of figure to draw: all, curve, or trace")
     args = parser.parse_args()
 
     figure_dir = os.path.join(args.dir, "figure")
     os.makedirs(figure_dir, exist_ok=True)
-    draw_training_curves(args.dir, figure_dir)
-    draw_uav_trace_comparison(args.dir, figure_dir, torch.device(args.device))
+    if args.type in ("all", "curve"):
+        draw_training_curves(args.dir, figure_dir)
+    if args.type in ("all", "trace"):
+        draw_uav_trace_comparison(args.dir, figure_dir, torch.device(args.device))
     print("Draw Complete")
 
 

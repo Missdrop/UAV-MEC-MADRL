@@ -234,6 +234,9 @@ class Environment(gym.Env):
             ]
         )
 
+        # reset cluster count
+        cluster_count = len(centers)
+
         # distribute UEs to clusters
         ues_per_cluster = num_ues // cluster_count
         remainder = num_ues % cluster_count
