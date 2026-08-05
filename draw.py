@@ -217,8 +217,8 @@ def draw_training_curves(result_dir: str, figure_dir: str) -> None:
         jitter=0.2,
     )
     fig.update_layout(
-        height=620,
-        width=900,
+        height=700,
+        width=700,
         showlegend=False,
         margin={"l": 85, "r": 35, "t": 120, "b": 70},
     )
