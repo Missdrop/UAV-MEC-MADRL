@@ -301,6 +301,25 @@ class Algorithm:
             "actor_loss": actor_losses,
         }
 
+    def warmup(self, env, episodes: int):
+        for _ in range(episodes):
+            state, _ = env.reset()
+            done = False
+
+            while not done:
+                # sample random actions from the environment
+                actions = env.action_space.sample()
+
+                # take action
+                next_state, reward, terminated, truncated, _ = env.step(actions)
+                done = terminated or truncated
+
+                # push transition to buffer
+                self.buffer.push(state, actions, reward, next_state, done)
+
+                # update current state
+                state = next_state
+
     def eval(self):
         for agent in self.agents:
             agent.eval()
