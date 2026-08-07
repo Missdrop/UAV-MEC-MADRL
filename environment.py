@@ -121,7 +121,7 @@ class Environment(gym.Env):
             uav_altitude,
             uav_custom_position,
         )
-        self.ues = self._init_ues(
+        self.ues, self.ue_centers = self._init_ues(
             ue_count,
             ue_transmit_power,
             ue_custom_position,
@@ -211,7 +211,7 @@ class Environment(gym.Env):
         cluster_count: int,
         cluster_radius: float,
         cluster_custom_center: list[tuple[float, float]] | None = None,
-    ) -> list[tuple[float, float, float]]:
+    ) -> tuple[list[tuple[float, float, float]], list[tuple[float, float]]]:
         """
         generate UE clusters with a given number of clusters and cluster radius
         """
@@ -255,7 +255,7 @@ class Environment(gym.Env):
 
                 positions.append((x, y, 0.0))
 
-        return positions
+        return positions, centers
 
     def _init_ues(
         self,
@@ -265,12 +265,13 @@ class Environment(gym.Env):
         cluster_count: int = 0,
         cluster_radius: float = 0.0,
         cluster_custom_center: list[tuple[float, float]] | None = None,
-    ) -> list[UE]:
+    ) -> tuple[list[UE], list[tuple[float, float]] | None]:
         ues = []
+        centers = None
         if custom_positions is not None:
             positions = custom_positions
         elif cluster_count > 0 and cluster_radius > 0.0:
-            positions = self._generate_ue_clusters(
+            positions, centers = self._generate_ue_clusters(
                 num_ues, cluster_count, cluster_radius, cluster_custom_center
             )
         else:
@@ -285,7 +286,7 @@ class Environment(gym.Env):
 
         for id, pos in enumerate(positions):
             ues.append(UE(id, pos, ue_transmit_power))
-        return ues
+        return ues, centers
 
     def _init_edges(
         self,

@@ -138,8 +138,10 @@ class Actor:
         learning_rate_decay: float = 0.9999,
         layer_norm: bool = False,
         dropout_rate: float = 0.0,
+        gradient_max_norm: float = 0.0,
     ):
         self.device = device
+        self.gradient_max_norm = gradient_max_norm
 
         # initialize networks
         self.online_actor = ActorNetwork(
@@ -228,6 +230,10 @@ class Actor:
         # do optimizer.step and decay learning rate
         self.optimizer.zero_grad()
         loss.backward()
+        if self.gradient_max_norm > 0.0:
+            torch.nn.utils.clip_grad_norm_(
+                self.online_actor.parameters(), self.gradient_max_norm
+            )
         self.optimizer.step()
         self.lr_scheduler.step()
 
@@ -300,8 +306,10 @@ class Critic:
         # attention
         head_count: int = 0,
         encoder_layer_count: int = 0,
+        gradient_max_norm: float = 0.0,
     ):
         self.device = device
+        self.gradient_max_norm = gradient_max_norm
 
         # init critic networks
         self.online_critic = CriticNetwork(
@@ -354,6 +362,10 @@ class Critic:
     def step(self, loss):
         self.optimizer.zero_grad()
         loss.backward()
+        if self.gradient_max_norm > 0.0:
+            torch.nn.utils.clip_grad_norm_(
+                self.online_critic.parameters(), self.gradient_max_norm
+            )
         self.optimizer.step()
         self.lr_scheduler.step()
 

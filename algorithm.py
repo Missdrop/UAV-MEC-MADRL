@@ -61,6 +61,7 @@ class Algorithm:
         dropout_rate: float = 0.2,
         head_count: int = 0,
         encoder_layer_count: int = 0,
+        gradient_max_norm: float = 0.0,
         seed: int | None = None,
     ):
 
@@ -104,6 +105,7 @@ class Algorithm:
                     layer_norm=use_layer_norm,
                     head_count=head_count,
                     encoder_layer_count=encoder_layer_count,
+                    gradient_max_norm=gradient_max_norm,
                     device=device,
                 )
                 for _ in range(critic_count)
@@ -134,6 +136,7 @@ class Algorithm:
                 layer_norm=use_layer_norm,
                 head_count=head_count,
                 encoder_layer_count=encoder_layer_count,
+                gradient_max_norm=gradient_max_norm,
                 device=device,
                 shared_critics=self.shared_critics,
             )

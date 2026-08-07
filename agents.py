@@ -36,6 +36,7 @@ class Agent:
         # attention
         head_count: int = 0,
         encoder_layer_count: int = 0,
+        gradient_max_norm: float = 0.0,
     ):
         self.gamma = gamma
         self.tau = tau
@@ -57,6 +58,7 @@ class Agent:
             learning_rate_decay=actor_lr_decay,
             layer_norm=layer_norm,
             dropout_rate=dropout_rate,
+            gradient_max_norm=gradient_max_norm,
             device=device,
         )
         self.critics: list[Critic] = (
@@ -73,6 +75,7 @@ class Agent:
                     dropout_rate=dropout_rate,
                     head_count=head_count,
                     encoder_layer_count=encoder_layer_count,
+                    gradient_max_norm=gradient_max_norm,
                     device=device,
                 )
                 for _ in range(critic_count)
@@ -128,7 +131,7 @@ class Agent:
 
         # calculate mse loss for each critic
         losses = [
-            torch.nn.functional.mse_loss(q_value[i], td_target)
+            torch.nn.functional.smooth_l1_loss(q_value[i], td_target)
             for i in range(len(self.critics))
         ]
 
