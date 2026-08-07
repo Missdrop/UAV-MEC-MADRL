@@ -90,7 +90,9 @@ class CriticNetwork(nn.Module):
                 norm_first=True,  # apply layer norm before attention and feedforward
             )
             self.encoder = nn.TransformerEncoder(
-                encoder_layer, num_layers=encoder_layer_count
+                encoder_layer,
+                num_layers=encoder_layer_count,
+                enable_nested_tensor=False,  # since norm_first, disable
             )
             self.pool = nn.Linear(hidden_dim, 1)
         else:

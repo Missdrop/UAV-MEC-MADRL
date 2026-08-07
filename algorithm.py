@@ -44,6 +44,7 @@ class Algorithm:
         tau: float = 5e-3,  # soft update factor
         # MADDPG & MATD3
         action_noise: float = 0.1,
+        action_noise_decay: float = 0.0,
         # MATD3
         target_policy_noise: float = 0.2,
         target_noise_bound: float | None = 0.5,
@@ -55,6 +56,7 @@ class Algorithm:
         # optional
         use_shared_critics: bool = True,
         parameter_noise: float = 0.1,
+        parameter_noise_decay: float = 0.0,
         use_layer_norm: bool = True,
         dropout_rate: float = 0.2,
         head_count: int = 0,
@@ -82,6 +84,8 @@ class Algorithm:
         self.policy_delay_step = policy_delay_step
         # exploratory actor
         self.parameter_noise = parameter_noise
+        self.action_noise_decay = action_noise_decay
+        self.parameter_noise_decay = parameter_noise_decay
 
         critic_input_dim = observation_dim + action_dim
         if encoder_layer_count <= 0:
@@ -209,6 +213,18 @@ class Algorithm:
 
         return reward, done, image, info
 
+    def decay_noise(self):
+        if self.action_noise > 0.0 and self.action_noise_decay > 0.0:
+            self.action_noise = max(
+                self.action_noise - self.action_noise_decay,
+                0.0,
+            )
+        if self.parameter_noise > 0.0 and self.parameter_noise_decay > 0.0:
+            self.parameter_noise = max(
+                self.parameter_noise - self.parameter_noise_decay,
+                0.0,
+            )
+
     def step(self):
         # if not enough samples in buffer, don't train
         if len(self.buffer) < self.batch_size:
@@ -295,6 +311,8 @@ class Algorithm:
             if self.shared_critics:
                 for critic in self.shared_critics:
                     critic.update(self.tau)
+
+        self.decay_noise()
 
         return {
             "critic_loss": critic_losses,
